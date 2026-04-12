@@ -256,7 +256,6 @@ body.looqz-picker-active * {
   border-radius: var(--looqz-radius);
   cursor: ew-resize;
   user-select: none;
-  height: 300px;
   background: var(--looqz-surface);
   line-height: 0;
   margin-bottom: 16px;
@@ -264,17 +263,8 @@ body.looqz-picker-active * {
 
 .looqz-comparison img {
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  height: auto;
   display: block;
-}
-
-.looqz-comparison-after,
-.looqz-comparison-before {
-  position: absolute;
-  top: 0; left: 0;
-  height: 100%;
-  width: 100%;
 }
 
 .looqz-comparison-after {
@@ -282,15 +272,20 @@ body.looqz-picker-active * {
 }
 
 .looqz-comparison-before {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  width: 100%;
   z-index: 2;
-  border-right: 3px solid white;
+  /* Removed border-right since we use clip-path now; vertical line is on handle */
 }
 
 .looqz-slider-handle {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 0;
+  width: 3px;
+  background: white;
   z-index: 3;
   display: flex;
   align-items: center;

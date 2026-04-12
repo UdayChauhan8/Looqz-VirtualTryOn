@@ -694,9 +694,10 @@ async function fireTryOn() {
     pbar.style.width = '100%';
 
     // Load into result UI
-    document.getElementById('looqz-result-before').src = STATE.productImageUrl;
+    document.getElementById('looqz-result-before').src = STATE.userPhotoBase64;
     document.getElementById('looqz-result-after').src = STATE.resultImageUrl;
-    document.getElementById('looqz-comparison-before').style.width = '50%';
+    document.getElementById('looqz-comparison-before').style.width = '100%';
+    document.getElementById('looqz-comparison-before').style.clipPath = 'polygon(0 0, 50% 0, 50% 100%, 0 100%)';
     document.getElementById('looqz-slider-handle').style.left = '50%';
     
     // Zero credits banner logic
@@ -738,7 +739,7 @@ function setupSlider() {
     const rect = container.getBoundingClientRect();
     let pos = Math.max(0, Math.min(x - rect.left, rect.width));
     let pct = (pos / rect.width) * 100;
-    beforeDiv.style.width = `${pct}%`;
+    beforeDiv.style.clipPath = `polygon(0 0, ${pct}% 0, ${pct}% 100%, 0 100%)`;
     handle.style.left = `${pct}%`;
   };
 
