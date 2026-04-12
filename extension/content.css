@@ -259,15 +259,23 @@ body.looqz-picker-active * {
   background: var(--looqz-surface);
   line-height: 0;
   margin-bottom: 16px;
+  height: 350px;
+  width: 100%;
 }
 
 .looqz-comparison img {
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
   display: block;
 }
 
 .looqz-comparison-after {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  width: 100%;
   z-index: 1;
 }
 

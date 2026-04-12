@@ -252,6 +252,22 @@
           }
         }
         updateMainScreenState();
+
+        // ─────────────────────────────────────────────────────────────────
+        // Silently fetch realtime credits from Looqz server
+        // ─────────────────────────────────────────────────────────────────
+        chrome.runtime.sendMessage({
+          action: "FETCH_LEDGER_CREDITS"
+        }, async (res) => {
+          if (!chrome.runtime.lastError && res && res.credits !== undefined) {
+            STATE.creditsRemaining = res.credits;
+            await setStorage({ creditsRemaining: STATE.creditsRemaining });
+            updateCreditsBadge();
+            updateMainScreenState();
+          }
+        });
+        // ─────────────────────────────────────────────────────────────────
+
       } else {
         switchScreen('screen-apikey');
       }
@@ -435,18 +451,26 @@
 
           const data = res.data || {};
           STATE.apiKey = val;
-          if (data.credits_remaining !== undefined) STATE.creditsRemaining = data.credits_remaining;
 
-          await setStorage({ apiKey: val, creditsRemaining: STATE.creditsRemaining });
+          // Attempt to fetch from ledger if logged in
+          chrome.runtime.sendMessage({ action: "FETCH_LEDGER_CREDITS" }, async (ledgerRes) => {
+            if (!chrome.runtime.lastError && ledgerRes && ledgerRes.credits !== undefined) {
+               STATE.creditsRemaining = ledgerRes.credits;
+            } else if (data.credits_remaining !== undefined) {
+               STATE.creditsRemaining = data.credits_remaining;
+            }
+            
+            await setStorage({ apiKey: val, creditsRemaining: STATE.creditsRemaining });
 
-          btnSaveKey.disabled = false;
-          btnSaveKey.textContent = 'Save & Start';
-          keyInput.value = '';
+            btnSaveKey.disabled = false;
+            btnSaveKey.textContent = 'Save & Start';
+            keyInput.value = '';
 
-          document.getElementById('looqz-key-display').textContent = `Key: ${val.substring(0, 12)}...`;
-          updateCreditsBadge();
-          updateMainScreenState();
-          switchScreen('screen-main');
+            document.getElementById('looqz-key-display').textContent = `Key: ${val.substring(0, 12)}...`;
+            updateCreditsBadge();
+            updateMainScreenState();
+            switchScreen('screen-main');
+          });
         });
 
       } catch (err) {
@@ -479,10 +503,21 @@
     function handleFile(file) {
       if (!file.type.startsWith('image/')) return showToast('Please select an image file');
       const reader = new FileReader();
-      reader.onload = async (e) => {
-        STATE.userPhotoBase64 = e.target.result;
-        await setStorage({ userPhotoBase64: STATE.userPhotoBase64 });
-        updateMainScreenState();
+      reader.onload = (e) => {
+        // Bake EXIF rotation by drawing to a canvas
+        const img = new Image();
+        img.onload = async () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, img.width, img.height);
+          
+          STATE.userPhotoBase64 = canvas.toDataURL('image/jpeg', 0.95);
+          await setStorage({ userPhotoBase64: STATE.userPhotoBase64 });
+          updateMainScreenState();
+        };
+        img.src = e.target.result;
       };
       reader.readAsDataURL(file);
     }
@@ -692,6 +727,42 @@
       clearInterval(tInterval);
       pbar.style.transition = 'width 0.2s linear';
       pbar.style.width = '100%';
+
+      // ─────────────────────────────────────────────────────────────────
+      // FIX Looqz AI Horizontal Output Bug
+      // If the API erroneously returned a sideways image (horizontal) while 
+      // the user upload was vertical, explicitly force it upright!
+      // ─────────────────────────────────────────────────────────────────
+      const forceUpright = () => {
+        return new Promise((resolve) => {
+          const rImg = new Image();
+          rImg.crossOrigin = "Anonymous";
+          rImg.onload = () => {
+            const uImg = new Image();
+            uImg.onload = () => {
+               // Is user vertical? Is result horizontal?
+               if (uImg.width < uImg.height && rImg.width > rImg.height) {
+                  const cvs = document.createElement('canvas');
+                  cvs.width = rImg.height;
+                  cvs.height = rImg.width;
+                  const ctx = cvs.getContext('2d');
+                  ctx.translate(cvs.width / 2, cvs.height / 2);
+                  ctx.rotate(90 * Math.PI / 180);
+                  ctx.drawImage(rImg, -rImg.width / 2, -rImg.height / 2);
+                  resolve(cvs.toDataURL('image/jpeg', 0.95));
+               } else {
+                  resolve(STATE.resultImageUrl);
+               }
+            };
+            uImg.onerror = () => resolve(STATE.resultImageUrl);
+            uImg.src = STATE.userPhotoBase64;
+          };
+          rImg.onerror = () => resolve(STATE.resultImageUrl);
+          rImg.src = STATE.resultImageUrl;
+        });
+      };
+
+      STATE.resultImageUrl = await forceUpright();
 
       // Load into result UI
       document.getElementById('looqz-result-before').src = STATE.userPhotoBase64;

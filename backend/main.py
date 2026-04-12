@@ -140,8 +140,11 @@ async def generate(request: Request, body: GenerateRequest):
     if not response.ok:
         try:
             err_content = response.json()
+            if not isinstance(err_content, dict):
+                err_content = {"data": err_content}
         except Exception:
             err_content = {"message": f"Looqz error {response.status_code}: {response.text[:200]}"}
+
         return JSONResponse(status_code=response.status_code, content=err_content)
 
     # Parse and enrich the success response
@@ -151,9 +154,5 @@ async def generate(request: Request, body: GenerateRequest):
         return JSONResponse(status_code=502, content={
             "message": f"Looqz returned non-JSON response: {response.text[:200]}"
         })
-
-    data["credits_remaining"] = response.headers.get("X-RateLimit-Remaining")
-    data["credits_limit"] = response.headers.get("X-RateLimit-Limit")
-    data["credits_reset"] = response.headers.get("X-RateLimit-Reset")
 
     return data
