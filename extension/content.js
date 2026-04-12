@@ -2,7 +2,8 @@
 // Wrapping in IIFE to avoid polluting global scope
 (function() {
 
-const PROXY_URL = "https://your-proxy.onrender.com/generate"; // Make sure to deploy and set this URL
+const PROXY_URL = "http://127.0.0.1:8000/generate"; // Local testing
+// const PROXY_URL = "https://your-proxy.onrender.com/generate"; // Deploy URL
 
 const STATE = {
   apiKey: null,
@@ -370,7 +371,10 @@ function bindEvents() {
   });
 
   document.getElementById('looqz-reset-ext').addEventListener('click', async () => {
-    await new Promise(r => chrome.runtime.sendMessage({ action: "CLEAR_STORAGE" }, r));
+    await new Promise(r => chrome.runtime.sendMessage({ action: "CLEAR_STORAGE" }, (res) => {
+      if (chrome.runtime.lastError) return r(); // swallow if context died
+      r(res);
+    }));
     STATE.apiKey = null;
     STATE.userPhotoBase64 = null;
     STATE.productImageUrl = null;
@@ -389,7 +393,8 @@ function bindEvents() {
 
   btnSaveKey.addEventListener('click', async () => {
     const val = keyInput.value.trim();
-    if (!val.startsWith('sk_live_') || val.length !== 40) {
+    if (!val.startsWith('sk_live_')) {
+      keyError.textContent = "Keys look like: sk_live_ followed by your characters";
       keyError.style.display = 'block';
       return;
     }
@@ -399,41 +404,50 @@ function bindEvents() {
     btnSaveKey.textContent = 'Validating...';
 
     try {
-      // Test proxy generate with fake images
-      const res = await fetch(PROXY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      // Test proxy generate with fake images via background
+      chrome.runtime.sendMessage({
+        action: "PROXY_FETCH",
+        url: PROXY_URL,
         body: JSON.stringify({
           api_key: val,
           product_image_url: "https://via.placeholder.com/150",
           user_image_url: "https://via.placeholder.com/150"
         })
-      });
+      }, async (res) => {
+        if (chrome.runtime.lastError) {
+          keyError.textContent = "Please reload the page. Extension was updated.";
+          keyError.style.display = 'block';
+          btnSaveKey.disabled = false;
+          btnSaveKey.textContent = 'Save & Start';
+          return;
+        }
+        if (res.error) {
+          throw new Error(res.error);
+        }
+        
+        if (res.status === 401) {
+          keyError.textContent = "This key wasn't recognised. Check it and try again.";
+          keyError.style.display = 'block';
+          btnSaveKey.disabled = false;
+          btnSaveKey.textContent = 'Save & Start';
+          return;
+        }
 
-      if (res.status === 401) {
-        keyError.textContent = "This key wasn't recognised. Check it and try again.";
-        keyError.style.display = 'block';
+        const data = res.data || {};
+        STATE.apiKey = val;
+        if (data.credits_remaining !== undefined) STATE.creditsRemaining = data.credits_remaining;
+        
+        await setStorage({ apiKey: val, creditsRemaining: STATE.creditsRemaining });
+        
         btnSaveKey.disabled = false;
         btnSaveKey.textContent = 'Save & Start';
-        return;
-      }
-      
-      // Even if 402 (no credits) or 422 (invalid images), the key is real
-      const data = await res.json().catch(() => ({}));
-      STATE.apiKey = val;
-      if (data.credits_remaining !== undefined) STATE.creditsRemaining = data.credits_remaining;
-      
-      await setStorage({ apiKey: val, creditsRemaining: STATE.creditsRemaining });
-      
-      // Reset visual state
-      btnSaveKey.disabled = false;
-      btnSaveKey.textContent = 'Save & Start';
-      keyInput.value = '';
-      
-      document.getElementById('looqz-key-display').textContent = `Key: ${val.substring(0, 12)}...`;
-      updateCreditsBadge();
-      updateMainScreenState();
-      switchScreen('screen-main');
+        keyInput.value = '';
+        
+        document.getElementById('looqz-key-display').textContent = `Key: ${val.substring(0, 12)}...`;
+        updateCreditsBadge();
+        updateMainScreenState();
+        switchScreen('screen-main');
+      });
 
     } catch (err) {
       keyError.textContent = "Network error communicating with Looqz Servers.";
@@ -564,19 +578,83 @@ async function fireTryOn() {
   }, 1500);
 
   try {
-    const res = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: STATE.apiKey,
-        product_image_url: STATE.productImageUrl,
-        user_image_url: STATE.userPhotoBase64
-      }),
-      signal: STATE.abortController.signal
+    
+    // Helper: upload any image URL or base64 to tmpfiles via background service worker
+    async function handleImageUpload(imageSource, label) {
+      lTextEl.textContent = `Uploading ${label}...`;
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+          action: "CATBOX_UPLOAD",
+          base64Data: imageSource
+        }, res => {
+          if (chrome.runtime.lastError) reject(new Error("Extension context invalidated. Refresh the page."));
+          else if (res.error) reject(new Error(res.error));
+          else resolve(res.url.trim());
+        });
+      });
+    }
+
+    // Upload user photo (it's a base64 data-URI)
+    let finalUserImageUrl = STATE.userPhotoBase64;
+    if (finalUserImageUrl.startsWith('data:image')) {
+      try {
+        finalUserImageUrl = await handleImageUpload(finalUserImageUrl, 'your photo');
+      } catch (err) {
+        throw new Error("Failed to upload your photo. Please try again.");
+      }
+    }
+
+    // ALSO upload the product/cloth image.
+    // Amazon CDN URLs (m.media-amazon.com) require cookies and are blocked 
+    // by Looqz's server-side image fetcher — uploading them makes them public.
+    let finalProductImageUrl = STATE.productImageUrl;
+    try {
+      lTextEl.textContent = "Uploading cloth image...";
+      // Fetch the cloth image via background (avoids CORS) then upload
+      finalProductImageUrl = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+          action: "FETCH_AND_UPLOAD",
+          url: STATE.productImageUrl
+        }, res => {
+          if (chrome.runtime.lastError) reject(new Error("Extension context invalidated. Refresh the page."));
+          else if (res.error) reject(new Error(res.error));
+          else resolve(res.url.trim());
+        });
+      });
+    } catch (err) {
+      // If fetch+upload fails, try using the URL directly as a fallback
+      console.warn("Looqz: cloth upload failed, using direct URL:", err.message);
+      finalProductImageUrl = STATE.productImageUrl;
+    }
+
+    // Background fetch helper
+    const doProxyFetch = () => {
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+          action: "PROXY_FETCH",
+          url: PROXY_URL,
+          body: JSON.stringify({
+            api_key: STATE.apiKey,
+            product_image_url: finalProductImageUrl,
+            user_image_url: finalUserImageUrl
+          })
+        }, (res) => {
+          if (chrome.runtime.lastError) reject(new Error("Extension context invalidated. Please refresh the page."));
+          else if (res.error) reject(new Error(res.error));
+          else resolve(res);
+        });
+      });
+    };
+
+    // Race the fetch against the abort signal
+    const fetchProm = doProxyFetch();
+    const abortProm = new Promise((_, reject) => {
+      STATE.abortController.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
     });
 
-    const data = await res.json();
-    
+    const res = await Promise.race([fetchProm, abortProm]);
+    const data = res.data || {};
+
     // Handle error statuses
     if (!res.ok) {
       clearInterval(tInterval);
@@ -591,7 +669,11 @@ async function fireTryOn() {
       } else if (res.status === 504) {
         errEl.textContent = "Image generation timed out. Try again.";
       } else if (res.status === 422) {
-        errEl.textContent = "Image format not supported. Try a different image.";
+        let msg = "Image format not supported.";
+        if (data.details) {
+          msg = Object.values(data.details).join(" ");
+        }
+        errEl.textContent = msg;
       } else {
         errEl.textContent = data.message || "An error occurred with generation.";
       }
@@ -612,7 +694,7 @@ async function fireTryOn() {
     pbar.style.width = '100%';
 
     // Load into result UI
-    document.getElementById('looqz-result-before').src = STATE.userPhotoBase64;
+    document.getElementById('looqz-result-before').src = STATE.productImageUrl;
     document.getElementById('looqz-result-after').src = STATE.resultImageUrl;
     document.getElementById('looqz-comparison-before').style.width = '50%';
     document.getElementById('looqz-slider-handle').style.left = '50%';
@@ -637,7 +719,9 @@ async function fireTryOn() {
     switchScreen('screen-main');
     const errEl = document.getElementById('looqz-tryon-error');
     errEl.style.display = 'block';
-    errEl.textContent = "Network error. Please check your connection.";
+    
+    // Check if the error is exactly "Network error" vs specific error text
+    errEl.textContent = err.message || "Network error. Please check your connection.";
   }
 }
 
