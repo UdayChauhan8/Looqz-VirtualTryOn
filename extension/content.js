@@ -2,8 +2,10 @@
 // Wrapping in IIFE to avoid polluting global scope
 (function () {
 
-  const PROXY_URL = "http://127.0.0.1:8000/generate"; // Local testing
-  // const PROXY_URL = "https://your-proxy.onrender.com/generate"; // Deploy URL
+  const PROXY_URL    = "http://127.0.0.1:8000/generate";     // Local testing
+  const VALIDATE_URL = "http://127.0.0.1:8000/validate-key"; // Key validation
+  // const PROXY_URL    = "https://your-proxy.onrender.com/generate";
+  // const VALIDATE_URL = "https://your-proxy.onrender.com/validate-key";
 
   const STATE = {
     apiKey: null,
@@ -462,15 +464,13 @@
       btnSaveKey.textContent = 'Validating...';
 
       try {
-        // Test proxy generate with fake images via background
+        // Validate the key against our backend's /validate-key endpoint.
+        // That endpoint sends a lightweight test request to Looqz and returns
+        // 200 (valid), 401 (wrong key), or 503 (backend/network error).
         chrome.runtime.sendMessage({
-          action: "PROXY_FETCH",
-          url: PROXY_URL,
-          body: JSON.stringify({
-            api_key: val,
-            product_image_url: "https://via.placeholder.com/150",
-            user_image_url: "https://via.placeholder.com/150"
-          })
+          action:      'VALIDATE_KEY',
+          validateUrl: VALIDATE_URL,
+          apiKey:      val
         }, async (res) => {
           if (chrome.runtime.lastError) {
             keyError.textContent = "Please reload the page. Extension was updated.";
@@ -480,7 +480,11 @@
             return;
           }
           if (res.error) {
-            throw new Error(res.error);
+            keyError.textContent = "Network error communicating with Looqz Servers.";
+            keyError.style.display = 'block';
+            btnSaveKey.disabled = false;
+            btnSaveKey.textContent = 'Save & Start';
+            return;
           }
 
           if (res.status === 401) {
@@ -501,7 +505,7 @@
             } else if (data.credits_remaining !== undefined) {
                STATE.creditsRemaining = data.credits_remaining;
             }
-            
+
             await setStorage({ apiKey: val, creditsRemaining: STATE.creditsRemaining });
 
             btnSaveKey.disabled = false;

@@ -105,6 +105,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Steps:
   //   1. Convert userPhotoBase64 string → Blob (avoids 33% JSON bloat)
   //   2. Attempt fetch(clothImageUrl) → Blob
+  // ── VALIDATE_KEY ──────────────────────────────────────────────────────────
+  // Lightweight key check used by the API key save flow in content.js.
+  // Sends a JSON POST to /validate-key on the proxy (not /generate).
+  // JSON is fine here because no binary images are involved.
+  if (message.action === 'VALIDATE_KEY') {
+    fetch(message.validateUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: message.apiKey }),
+    })
+      .then(async res => {
+        let data = {};
+        try { data = await res.json(); } catch (e) { /* non-JSON */ }
+        sendResponse({ ok: res.ok, status: res.status, data });
+      })
+      .catch(err => sendResponse({ error: err.message }));
+    return true;
+  }
+
+  // ── TRYON_WITH_BLOBS ──────────────────────────────────────────────────────
+  // The single secure try-on pipeline.
+  //
+  // Receives from content.js:
+  //   userPhotoBase64  — "data:image/jpeg;base64,..." string (JSON-safe)
+  //   clothImageUrl    — URL of the product image on the merchant site
+  //   apiKey           — Looqz API key
+  //   proxyUrl         — URL of our FastAPI /generate endpoint
+  //
+  // Steps:
+  //   1. Convert userPhotoBase64 string → Blob (avoids 33% JSON bloat)
+  //   2. Attempt fetch(clothImageUrl) → Blob
   //      CORS fallback: if fetch fails, send the URL string instead so
   //      the backend can pass it directly to Looqz.
   //   3. Build multipart/form-data and POST to proxyUrl.
@@ -118,6 +149,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true; // keep the message channel open for async response
   }
+
 
   // ── FETCH_LEDGER_CREDITS ──────────────────────────────────────────────────
   // Scrapes the Looqz dashboard to get the user's real-time credit balance.

@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, Request, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -166,6 +167,43 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
+
+class ValidateKeyRequest(BaseModel):
+    api_key: str
+
+
+@app.post("/validate-key")
+@limiter.limit("10/minute")
+async def validate_key(request: Request, body: ValidateKeyRequest):
+    """
+    Lightweight API key check. Sends a minimal test request to Looqz with
+    placeholder images. Returns 200 (accepted) or 401 (invalid key).
+    This endpoint accepts JSON so it remains simple — no binary uploads needed.
+    """
+    if not body.api_key.startswith("sk_live_"):
+        return JSONResponse(status_code=400, content={"message": "Invalid key format."})
+
+    loop = asyncio.get_event_loop()
+    try:
+        response = await loop.run_in_executor(
+            executor,
+            _call_looqz,
+            body.api_key,
+            "https://placehold.co/150x200/png",
+            "https://placehold.co/150x200/png",
+        )
+    except requests.exceptions.ConnectionError as e:
+        return JSONResponse(status_code=503, content={"message": f"Connection to Looqz failed: {str(e)[:120]}"})
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"message": str(e)})
+
+    try:
+        data = response.json()
+    except Exception:
+        data = {}
+
+    return JSONResponse(status_code=response.status_code, content=data)
 
 
 @app.post("/generate")
