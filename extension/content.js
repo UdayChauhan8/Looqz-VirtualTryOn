@@ -19,6 +19,20 @@
 
   window.looqzState = STATE; // Share with picker.js
 
+  // ── Re-injection safety ─────────────────────────────────────────────────────
+  // These are module-level (not per-call) so they survive multiple init() runs.
+  //
+  // _globalListenersRegistered: guards chrome.runtime.onMessage and the custom
+  //   'looqz-image-selected' event so they are NEVER registered more than once,
+  //   even when init() is called again after a SPA body-wipe.
+  //
+  // _sliderHandlers: holds references to the four window-level slider handlers
+  //   so setupSlider() can removeEventListener on them before re-adding.
+  //   Without this, each re-injection piles up orphaned mousemove/touchmove
+  //   handlers on window.
+  let _globalListenersRegistered = false;
+  let _sliderHandlers = { mouseUp: null, mouseMove: null, touchEnd: null, touchMove: null };
+
   // ─────────────────────────────────────────────────────────────────────────────
   // HTML TEMPLATE
   // ─────────────────────────────────────────────────────────────────────────────
@@ -197,6 +211,10 @@
   // INITIALIZATION
   // ─────────────────────────────────────────────────────────────────────────────
   function init() {
+    // Guard: body must exist before we can inject the sidebar
+    if (!document.body) return;
+
+    // Already injected — nothing to do
     if (document.getElementById('looqz-sidebar')) return;
 
     const div = document.createElement('div');
@@ -205,15 +223,28 @@
 
     bindEvents();
     setupSlider();
+  }
 
-    // Listen for background toggle
-    chrome.runtime.onMessage.addListener((msg) => {
+  // Registers the two truly global listeners (chrome messaging + picker event).
+  // Called once from the kickoff block — never from init() — so re-injection
+  // can never cause duplicate handler registrations.
+  function registerGlobalListeners() {
+    if (_globalListenersRegistered) return;
+    _globalListenersRegistered = true;
+
+    // Background → content: handle incoming messages
+    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg.action === 'TOGGLE_SIDEBAR') {
         toggleSidebar();
       }
+      // PING: background.js uses this to confirm the content script is alive.
+      // Sync response — resolves the sendMessage Promise on the background side.
+      if (msg.action === 'PING') {
+        sendResponse({ alive: true });
+      }
     });
 
-    // Listen for picker
+    // picker.js → content: image was selected
     document.addEventListener('looqz-image-selected', (e) => {
       STATE.productImageUrl = e.detail.url;
       updateMainScreenState();
@@ -224,7 +255,18 @@
   // STATE & SCREEN MANAGEMENT
   // ─────────────────────────────────────────────────────────────────────────────
   async function toggleSidebar() {
+    // Defensive re-init: SPAs (React/Next.js) can wipe and re-render the entire
+    // document body, destroying the injected sidebar. Calling init() here is
+    // safe — it short-circuits immediately if the sidebar already exists.
+    if (!document.getElementById('looqz-sidebar')) {
+      init();
+    }
+
     const sidebar = document.getElementById('looqz-sidebar');
+
+    // If init() still couldn't inject (e.g. body not ready), bail silently.
+    if (!sidebar) return;
+
     STATE.sidebarOpen = !STATE.sidebarOpen;
 
     if (STATE.sidebarOpen) {
@@ -611,84 +653,41 @@
       tIdx = (tIdx + 1) % loadingTexts.length;
       lTextEl.textContent = loadingTexts[tIdx];
     }, 1500);
-
     try {
 
-      // Helper: upload any image URL or base64 to tmpfiles via background service worker
-      async function handleImageUpload(imageSource, label) {
-        lTextEl.textContent = `Uploading ${label}...`;
-        return new Promise((resolve, reject) => {
-          chrome.runtime.sendMessage({
-            action: "CATBOX_UPLOAD",
-            base64Data: imageSource
-          }, res => {
-            if (chrome.runtime.lastError) reject(new Error("Extension context invalidated. Refresh the page."));
-            else if (res.error) reject(new Error(res.error));
-            else resolve(res.url.trim());
-          });
+      // ── Single-shot secure try-on request ─────────────────────────────────
+      // Sends the user photo (Base64 string) and cloth URL to background.js.
+      // background.js converts Base64 → Blob, fetches the cloth image as a
+      // Blob (with CORS fallback to raw URL), builds FormData, and POSTs
+      // multipart/form-data to our FastAPI proxy. No tmpfiles.org involvement.
+      lTextEl.textContent = 'Preparing images...';
+
+      const tryOnProm = new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+          action: 'TRYON_WITH_BLOBS',
+          userPhotoBase64: STATE.userPhotoBase64,
+          clothImageUrl:   STATE.productImageUrl,
+          apiKey:          STATE.apiKey,
+          proxyUrl:        PROXY_URL
+        }, res => {
+          if (chrome.runtime.lastError) {
+            reject(new Error('Extension context invalidated. Please refresh the page.'));
+          } else if (res && res.error) {
+            reject(new Error(res.error));
+          } else {
+            resolve(res);
+          }
         });
-      }
+      });
 
-      // Upload user photo (it's a base64 data-URI)
-      let finalUserImageUrl = STATE.userPhotoBase64;
-      if (finalUserImageUrl.startsWith('data:image')) {
-        try {
-          finalUserImageUrl = await handleImageUpload(finalUserImageUrl, 'your photo');
-        } catch (err) {
-          throw new Error("Failed to upload your photo. Please try again.");
-        }
-      }
 
-      // ALSO upload the product/cloth image.
-      // Amazon CDN URLs (m.media-amazon.com) require cookies and are blocked 
-      // by Looqz's server-side image fetcher — uploading them makes them public.
-      let finalProductImageUrl = STATE.productImageUrl;
-      try {
-        lTextEl.textContent = "Uploading cloth image...";
-        // Fetch the cloth image via background (avoids CORS) then upload
-        finalProductImageUrl = await new Promise((resolve, reject) => {
-          chrome.runtime.sendMessage({
-            action: "FETCH_AND_UPLOAD",
-            url: STATE.productImageUrl
-          }, res => {
-            if (chrome.runtime.lastError) reject(new Error("Extension context invalidated. Refresh the page."));
-            else if (res.error) reject(new Error(res.error));
-            else resolve(res.url.trim());
-          });
-        });
-      } catch (err) {
-        // If fetch+upload fails, try using the URL directly as a fallback
-        console.warn("Looqz: cloth upload failed, using direct URL:", err.message);
-        finalProductImageUrl = STATE.productImageUrl;
-      }
-
-      // Background fetch helper
-      const doProxyFetch = () => {
-        return new Promise((resolve, reject) => {
-          chrome.runtime.sendMessage({
-            action: "PROXY_FETCH",
-            url: PROXY_URL,
-            body: JSON.stringify({
-              api_key: STATE.apiKey,
-              product_image_url: finalProductImageUrl,
-              user_image_url: finalUserImageUrl
-            })
-          }, (res) => {
-            if (chrome.runtime.lastError) reject(new Error("Extension context invalidated. Please refresh the page."));
-            else if (res.error) reject(new Error(res.error));
-            else resolve(res);
-          });
-        });
-      };
-
-      // Race the fetch against the abort signal
-      const fetchProm = doProxyFetch();
       const abortProm = new Promise((_, reject) => {
         STATE.abortController.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
       });
 
-      const res = await Promise.race([fetchProm, abortProm]);
+      const res = await Promise.race([tryOnProm, abortProm]);
       const data = res.data || {};
+
 
       // Handle error statuses
       if (!res.ok) {
@@ -814,19 +813,33 @@
       handle.style.left = `${pct}%`;
     };
 
-    container.addEventListener('mousedown', (e) => { isDragging = true; updateSlider(e.clientX); });
-    window.addEventListener('mouseup', () => { isDragging = false; });
-    window.addEventListener('mousemove', (e) => { if (isDragging) updateSlider(e.clientX); });
+    // ── Remove any stale window handlers from a previous injection cycle ────────
+    // Without this, every re-injection appends NEW handlers on top of the old
+    // ones, causing multiple misfires and memory leaks.
+    if (_sliderHandlers.mouseUp)   window.removeEventListener('mouseup',   _sliderHandlers.mouseUp);
+    if (_sliderHandlers.mouseMove) window.removeEventListener('mousemove', _sliderHandlers.mouseMove);
+    if (_sliderHandlers.touchEnd)  window.removeEventListener('touchend',  _sliderHandlers.touchEnd);
+    if (_sliderHandlers.touchMove) window.removeEventListener('touchmove', _sliderHandlers.touchMove);
 
-    // Touch support
-    container.addEventListener('touchstart', (e) => { isDragging = true; updateSlider(e.touches[0].clientX); });
-    window.addEventListener('touchend', () => { isDragging = false; });
-    window.addEventListener('touchmove', (e) => {
+    // Store named references so the next injection can clean them up too
+    _sliderHandlers.mouseUp   = () => { isDragging = false; };
+    _sliderHandlers.mouseMove = (e) => { if (isDragging) updateSlider(e.clientX); };
+    _sliderHandlers.touchEnd  = () => { isDragging = false; };
+    _sliderHandlers.touchMove = (e) => {
       if (isDragging) {
         e.preventDefault();
         updateSlider(e.touches[0].clientX);
       }
-    }, { passive: false });
+    };
+
+    container.addEventListener('mousedown', (e) => { isDragging = true; updateSlider(e.clientX); });
+    window.addEventListener('mouseup',   _sliderHandlers.mouseUp);
+    window.addEventListener('mousemove', _sliderHandlers.mouseMove);
+
+    // Touch support
+    container.addEventListener('touchstart', (e) => { isDragging = true; updateSlider(e.touches[0].clientX); });
+    window.addEventListener('touchend',  _sliderHandlers.touchEnd);
+    window.addEventListener('touchmove', _sliderHandlers.touchMove, { passive: false });
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -871,11 +884,90 @@
     setTimeout(() => toast.remove(), 3000);
   }
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // SPA SELF-HEALING — Auto-restores an open sidebar after SPA navigation wipes
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Problem: React/Next.js SPAs re-render document.body on route changes,
+  // destroying every injected DOM node. If the user had the sidebar open and
+  // clicks a product link, the sidebar vanishes and they have no idea why.
+  //
+  // Fix: A MutationObserver watches for sidebar removal. If it detects the
+  // sidebar is gone *while STATE.sidebarOpen is true*, it automatically
+  // re-injects and re-opens — zero manual intervention required.
+  //
+  // Performance note: we observe only shallow childList (not subtree) on body
+  // and html. This means the observer fires only when direct children of <body>
+  // or <html> change — not on every DOM mutation inside the page. Cost is
+  // essentially zero on React apps with deep virtual DOM trees.
+  function watchForSPAWipe() {
+    // The core recovery action: reset state and re-open cleanly.
+    function recover() {
+      // ── Step 1: Always re-bind bodyObserver to the current live <body> ──────
+      // MutationObserver locks onto the exact memory reference of the node it
+      // was given. If the SPA replaced <body>, bodyObserver is now pointing at
+      // a dead node in GC limbo — it will never fire again. Disconnect and
+      // re-attach unconditionally so the observer is always on the live node,
+      // regardless of how many times the SPA swaps the body element.
+      if (document.body) {
+        bodyObserver.disconnect();
+        bodyObserver.observe(document.body, { childList: true });
+      }
+
+      // ── Step 2: Restore the sidebar if it was open ─────────────────────────
+      if (!STATE.sidebarOpen) return;      // sidebar was closed — nothing to restore
+      if (document.getElementById('looqz-sidebar')) return; // still alive — no-op
+      // Reset the flag so toggleSidebar() opens (not closes) on next call
+      STATE.sidebarOpen = false;
+      toggleSidebar();
+    }
+
+    // Observer on document.body: catches sidebar removal when the SPA
+    // re-renders body's children (the most common React/Next.js pattern).
+    const bodyObserver = new MutationObserver(recover);
+
+    // Observer on document.documentElement (<html>): catches the rare case
+    // where a SPA replaces <body> itself. When that happens, re-attach
+    // bodyObserver to the fresh <body> and then attempt recovery.
+    const htmlObserver = new MutationObserver(() => {
+      if (document.body) {
+        bodyObserver.disconnect();
+        bodyObserver.observe(document.body, { childList: true });
+        recover();
+      }
+    });
+
+    // Attach both observers. Guard against edge cases where body/html
+    // are not yet present (shouldn't happen at document_end, but be safe).
+    if (document.body) {
+      bodyObserver.observe(document.body, { childList: true });
+    }
+    if (document.documentElement) {
+      htmlObserver.observe(document.documentElement, { childList: true });
+    }
+  }
+
   // Kickoff
+  // registerGlobalListeners() — exactly once, unconditionally.
+  // init()                    — injects sidebar DOM + binds element events.
+  // watchForSPAWipe()         — arms the MutationObserver self-healing loop.
+  registerGlobalListeners();
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     init();
   } else {
     document.addEventListener('DOMContentLoaded', init);
   }
+  watchForSPAWipe();
+
+  // ── CONTENT_SCRIPT_READY ───────────────────────────────────────────────────────
+  // Sent AFTER registerGlobalListeners() and init() have both completed.
+  // background.js listens for this specific message and uses it as the
+  // absolute, race-condition-free trigger to send TOGGLE_SIDEBAR back.
+  // — This is safer than relying on executeScript's Promise resolving, which
+  //   only guarantees the script evaluated, not that Chrome's IPC has finished
+  //   registering the internal message listener. —
+  chrome.runtime.sendMessage({ action: 'CONTENT_SCRIPT_READY' }).catch(() => {
+    // Silently ignore: background service worker may have been inactive.
+    // In that case the PING on the next click will still work correctly.
+  });
 
 })();
