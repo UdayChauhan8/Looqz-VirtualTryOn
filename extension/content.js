@@ -550,16 +550,30 @@
       if (!file.type.startsWith('image/')) return showToast('Please select an image file');
       const reader = new FileReader();
       reader.onload = (e) => {
-        // Bake EXIF rotation by drawing to a canvas
         const img = new Image();
         img.onload = async () => {
+          // ── Aggressive downscale ────────────────────────────────────────
+          // Render free tier = 512 MB RAM. A 12MP phone photo is 8-15 MB.
+          // Downscale to max 1024px on longest edge + JPEG 82% quality
+          // → ~150 KB payload. 98% memory reduction on the backend.
+          const MAX_EDGE = 1024;
+          let w = img.width;
+          let h = img.height;
+
+          if (w > MAX_EDGE || h > MAX_EDGE) {
+            const ratio = Math.min(MAX_EDGE / w, MAX_EDGE / h);
+            w = Math.round(w * ratio);
+            h = Math.round(h * ratio);
+          }
+
           const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
+          canvas.width = w;
+          canvas.height = h;
           const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, img.width, img.height);
-          
-          STATE.userPhotoBase64 = canvas.toDataURL('image/jpeg', 0.95);
+          // Drawing to canvas also bakes EXIF rotation — no separate step needed
+          ctx.drawImage(img, 0, 0, w, h);
+
+          STATE.userPhotoBase64 = canvas.toDataURL('image/jpeg', 0.82);
           await setStorage({ userPhotoBase64: STATE.userPhotoBase64 });
           updateMainScreenState();
         };
