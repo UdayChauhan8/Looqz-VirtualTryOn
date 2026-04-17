@@ -1,13 +1,16 @@
 import os
+import re
 import uuid
+import time
+import shutil
 import asyncio
+import threading
 import requests
-import boto3
-from botocore.config import Config
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, Request, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -20,33 +23,27 @@ load_dotenv()
 
 LOOQZ_API_URL      = os.getenv("LOOQZ_API_URL", "https://www.looqz.in/api/v1/public/generate-image")
 WHITELISTED_ORIGIN = os.getenv("WHITELISTED_ORIGIN", "http://127.0.0.1:8000")
+BACKEND_URL        = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
-R2_ACCOUNT_ID      = os.getenv("R2_ACCOUNT_ID")
-R2_ACCESS_KEY_ID   = os.getenv("R2_ACCESS_KEY_ID")
-R2_SECRET_KEY      = os.getenv("R2_SECRET_ACCESS_KEY")
-R2_BUCKET          = os.getenv("R2_BUCKET_NAME", "looqz-tryon-temp")
-PRESIGN_TTL        = int(os.getenv("PRESIGN_TTL_SECONDS", "300"))   # 5 minutes
+# Chrome Extension ID — locks CORS so only your extension can talk to this server.
+# Set this in Render Environment Variables. Leave empty for local dev (falls back to *).
+ALLOWED_EXTENSION_ID = os.getenv("ALLOWED_EXTENSION_ID", "")
 
-# ── R2 / S3 client ────────────────────────────────────────────────────────────
-# Cloudflare R2 is S3-compatible. To switch to AWS S3, remove `endpoint_url`.
-# The client is None when env vars are not configured (local dev without R2).
+# Upload constraints
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB hard cap per file
+TMP_DIR          = Path("/tmp")
+TMP_PREFIX       = "looqz-"          # all our temp files start with this
+SWEEPER_MAX_AGE  = 300               # 5 minutes — anything older gets swept
+SWEEPER_INTERVAL = 600               # 10 minutes between sweeper runs
 
-def _make_r2_client():
-    if not all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_KEY]):
-        return None
-    return boto3.client(
-        "s3",
-        endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
-        aws_access_key_id=R2_ACCESS_KEY_ID,
-        aws_secret_access_key=R2_SECRET_KEY,
-        config=Config(signature_version="s3v4"),
-        region_name="auto",
-    )
+# Strict regex for /tmp-image/{filename} — blocks directory traversal.
+# Only allows: alphanumeric, dashes, must end in .jpg. No slashes, dots, or backslashes.
+SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9\-]+\.jpg$")
 
-r2 = _make_r2_client()
-
-# Thread pool — sync boto3 / requests calls run here, never blocking the loop
-executor = ThreadPoolExecutor(max_workers=10)
+# ── Thread pool ───────────────────────────────────────────────────────────────
+# Clamped to 3 workers — Render free tier has 0.1 vCPU and 512 MB RAM.
+# This prevents CPU thrashing from too many concurrent requests.post calls.
+executor = ThreadPoolExecutor(max_workers=3)
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
@@ -55,78 +52,103 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
     title="Looqz Extension Proxy",
     description="Secure multipart proxy for the Looqz Virtual Try-On Chrome Extension.",
-    version="3.0.0",
+    version="4.0.0",
 )
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# ── CORS lockdown ─────────────────────────────────────────────────────────────
+# Production: locked to chrome-extension://<your_extension_id>
+# Local dev:  falls back to * when ALLOWED_EXTENSION_ID is not set
+allowed_origins = []
+if ALLOWED_EXTENSION_ID:
+    allowed_origins.append(f"chrome-extension://{ALLOWED_EXTENSION_ID}")
+else:
+    allowed_origins.append("*")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# ── R2 helpers (run in thread pool) ──────────────────────────────────────────
 
-def _upload_bytes_to_r2(data: bytes, key: str, content_type: str = "image/jpeg") -> str:
-    """
-    Streams bytes into the private R2 bucket under the given key.
-    Returns the key so the caller can generate a pre-signed URL or delete it.
-    Raises if the client is not configured or upload fails.
-    """
-    if r2 is None:
-        raise RuntimeError("R2 client not configured. Set R2_* env vars.")
-    r2.put_object(
-        Bucket=R2_BUCKET,
-        Key=key,
-        Body=data,
-        ContentType=content_type,
-    )
-    return key
+# ── Background sweeper ───────────────────────────────────────────────────────
+# Daemon thread that wakes every 10 minutes and purges any looqz-*.jpg file
+# in /tmp older than 5 minutes. This is the infra-level failsafe — if a
+# request crashes, times out, or the user disconnects mid-generation, the
+# finally: block might not run. The sweeper guarantees disk doesn't fill up.
 
-
-def _generate_presigned_url(key: str) -> str:
-    """
-    Generates a temporary GET URL for a private R2 object.
-    Expires in PRESIGN_TTL seconds (default 5 minutes).
-    After that the URL is permanently dead — the Looqz API will have
-    already downloaded the image long before expiry.
-    """
-    if r2 is None:
-        raise RuntimeError("R2 client not configured.")
-    return r2.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": R2_BUCKET, "Key": key},
-        ExpiresIn=PRESIGN_TTL,
-    )
-
-
-def _delete_r2_objects(keys: list[str]) -> None:
-    """
-    Deletes one or more objects from R2.
-    Called via FastAPI BackgroundTasks so it runs AFTER the HTTP response
-    is sent to the client — zero added latency for the user.
-    The R2 bucket also has a 24-hour lifecycle rule as an infra-level
-    failsafe in case this call is skipped (e.g. server crash).
-    """
-    if r2 is None:
-        return
-    for key in keys:
+def _sweeper_loop():
+    """Runs forever in a daemon thread. Scans /tmp for orphaned temp images."""
+    while True:
+        time.sleep(SWEEPER_INTERVAL)
         try:
-            r2.delete_object(Bucket=R2_BUCKET, Key=key)
+            now = time.time()
+            count = 0
+            for f in TMP_DIR.glob(f"{TMP_PREFIX}*.jpg"):
+                try:
+                    age = now - f.stat().st_mtime
+                    if age > SWEEPER_MAX_AGE:
+                        f.unlink(missing_ok=True)
+                        count += 1
+                except Exception:
+                    pass
+            if count:
+                print(f"[Looqz sweeper] Purged {count} orphaned temp file(s).")
         except Exception as e:
-            print(f"[Looqz] R2 delete failed for {key}: {e}")
+            print(f"[Looqz sweeper] Error during sweep: {e}")
 
 
-# ── Looqz API caller (sync, runs in thread pool) ─────────────────────────────
+@app.on_event("startup")
+def start_sweeper():
+    t = threading.Thread(target=_sweeper_loop, daemon=True)
+    t.start()
+    print("[Looqz] Background sweeper started (interval=10min, max_age=5min).")
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _stream_upload_to_tmp(upload: UploadFile) -> Path:
+    """
+    Streams an UploadFile to /tmp/looqz-<uuid>.jpg using constant memory.
+    Raises HTTPException if the file exceeds MAX_UPLOAD_BYTES.
+    Returns the Path to the written file.
+    """
+    filename = f"{TMP_PREFIX}{uuid.uuid4()}.jpg"
+    dest = TMP_DIR / filename
+
+    written = 0
+    with open(dest, "wb") as f:
+        while True:
+            chunk = upload.file.read(8192)  # 8 KB chunks — constant memory
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > MAX_UPLOAD_BYTES:
+                # Clean up the partial file and reject
+                f.close()
+                dest.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Upload exceeds {MAX_UPLOAD_BYTES // (1024*1024)} MB limit."
+                )
+            f.write(chunk)
+
+    return dest
+
+
+def _tmp_file_to_url(filepath: Path) -> str:
+    """Constructs a public URL for a /tmp file served by our /tmp-image route."""
+    return f"{BACKEND_URL.rstrip('/')}/tmp-image/{filepath.name}"
+
 
 def _call_looqz(api_key: str, product_url: str, user_url: str) -> requests.Response:
     """
-    Calls the Looqz generation API.
+    Calls the Looqz generation API. Runs in the clamped thread pool.
     Both product_url and user_url must be publicly fetchable at call time.
-    When using R2, these are pre-signed URLs that expire in 5 minutes.
     """
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -152,6 +174,15 @@ def _call_looqz(api_key: str, product_url: str, user_url: str) -> requests.Respo
     )
 
 
+def _cleanup_files(paths: list[Path]):
+    """Silently deletes a list of temp files. Safe to call multiple times."""
+    for p in paths:
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass  # sweeper will catch it later
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -159,8 +190,8 @@ def root():
     return {
         "service": "Looqz Extension Proxy",
         "status": "running",
-        "version": "3.0.0",
-        "r2_configured": r2 is not None,
+        "version": "4.0.0",
+        "cors_locked": bool(ALLOWED_EXTENSION_ID),
     }
 
 
@@ -168,6 +199,37 @@ def root():
 def health():
     return {"status": "healthy"}
 
+
+# ── Hardened temp image serving ───────────────────────────────────────────────
+# The Looqz API needs to fetch our uploaded images. This route serves them
+# from /tmp — but ONLY files matching the strict naming pattern.
+
+@app.get("/tmp-image/{filename}")
+async def serve_tmp_image(filename: str):
+    """
+    Serves a temporary image from /tmp.
+    Hardened against directory traversal:
+    - Strict regex: only alphanumeric + dashes + .jpg
+    - Rejects any slash, backslash, or dot-dot sequence
+    - Only serves files with the looqz- prefix
+    """
+    # Block traversal attempts
+    if not SAFE_FILENAME_RE.match(filename):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+
+    # Enforce our prefix — prevents serving arbitrary /tmp files
+    if not filename.startswith(TMP_PREFIX):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+
+    filepath = TMP_DIR / filename
+
+    if not filepath.is_file():
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    return FileResponse(filepath, media_type="image/jpeg")
+
+
+# ── Key validation ────────────────────────────────────────────────────────────
 
 class ValidateKeyRequest(BaseModel):
     api_key: str
@@ -206,17 +268,18 @@ async def validate_key(request: Request, body: ValidateKeyRequest):
     return JSONResponse(status_code=response.status_code, content=data)
 
 
+# ── Main generation endpoint ─────────────────────────────────────────────────
+
 @app.post("/generate")
 @limiter.limit("30/minute")
 async def generate(
     request: Request,
-    background_tasks: BackgroundTasks,
     # ── Form fields ──────────────────────────────────────────────────────────
     api_key: str = Form(...),
-    # ── File uploads (optional — exactly one of the two cloth fields present)
+    # ── File uploads ─────────────────────────────────────────────────────────
     user_image: UploadFile = File(...),
-    product_image: UploadFile = File(None),     # Blob path
-    product_image_url: str = Form(None),         # URL fallback path
+    product_image: UploadFile = File(None),       # Binary cloth (optional)
+    product_image_url: str = Form(None),           # URL fallback (optional)
 ):
     """
     Secure multipart try-on endpoint.
@@ -226,17 +289,17 @@ async def generate(
     URL string (product_image_url) depending on whether it could fetch the
     cloth image from the CDN without a CORS error.
 
-    This endpoint:
-      1. Validates the API key format.
-      2. Streams both binary uploads directly into the private R2 bucket
-         (UUID object keys — cannot be guessed).
-      3. Generates pre-signed GET URLs (5-minute TTL).
-      4. Forwards the pre-signed URLs to the Looqz API.
-      5. Queues background deletion of the R2 objects (non-blocking —
-         response is returned to the client before deletion runs).
+    Pipeline:
+      1. Validate API key format.
+      2. Stream binary uploads to /tmp (constant memory, 10 MB cap).
+      3. For product_image_url: pass it directly to Looqz unchanged.
+         No download. No middleman. Zero wasted bandwidth.
+      4. Call Looqz API via the clamped thread pool (max 3 workers).
+      5. finally: block deletes /tmp files even on crash/timeout.
+         Sweeper daemon catches any orphans the finally misses.
     """
 
-    # Validate key format early — avoids unnecessary R2 writes
+    # Validate key format early — avoids unnecessary disk writes
     if not api_key.startswith("sk_live_"):
         return JSONResponse(status_code=400, content={
             "message": "Invalid API key format. Must start with sk_live_"
@@ -248,51 +311,34 @@ async def generate(
             "message": "Provide either product_image (file) or product_image_url (string)."
         })
 
+    tmp_files: list[Path] = []
     loop = asyncio.get_event_loop()
-    uploaded_keys: list[str] = []
 
     try:
-        # ── Step 1: Upload user photo to R2 ──────────────────────────────────
-        user_bytes = await user_image.read()
-        user_key = f"user/{uuid.uuid4()}.jpg"
-
-        await loop.run_in_executor(
-            executor, _upload_bytes_to_r2, user_bytes, user_key,
-            user_image.content_type or "image/jpeg"
-        )
-        uploaded_keys.append(user_key)
-
-        user_presigned_url = await loop.run_in_executor(
-            executor, _generate_presigned_url, user_key
-        )
+        # ── Step 1: Stream user photo to /tmp ────────────────────────────────
+        user_path = _stream_upload_to_tmp(user_image)
+        tmp_files.append(user_path)
+        user_url = _tmp_file_to_url(user_path)
 
         # ── Step 2: Handle cloth image ────────────────────────────────────────
         if product_image is not None:
-            # Binary path: upload to R2, generate pre-signed URL
-            cloth_bytes = await product_image.read()
-            cloth_key = f"cloth/{uuid.uuid4()}.jpg"
-
-            await loop.run_in_executor(
-                executor, _upload_bytes_to_r2, cloth_bytes, cloth_key,
-                product_image.content_type or "image/jpeg"
-            )
-            uploaded_keys.append(cloth_key)
-
-            cloth_url = await loop.run_in_executor(
-                executor, _generate_presigned_url, cloth_key
-            )
+            # Binary path: stream to /tmp, construct public URL
+            cloth_path = _stream_upload_to_tmp(product_image)
+            tmp_files.append(cloth_path)
+            cloth_url = _tmp_file_to_url(cloth_path)
         else:
-            # URL fallback path: pass raw URL directly — no R2 upload needed
+            # URL fallback path: pass the original URL directly to Looqz.
+            # No download. Looqz's servers fetch it themselves.
             cloth_url = product_image_url
 
-        # ── Step 3: Call Looqz API ────────────────────────────────────────────
+        # ── Step 3: Call Looqz API via clamped thread pool ────────────────────
         response = await loop.run_in_executor(
-            executor, _call_looqz, api_key, cloth_url, user_presigned_url
+            executor, _call_looqz, api_key, cloth_url, user_url
         )
 
-    except RuntimeError as e:
-        # R2 not configured — surface a clear error during local dev
-        return JSONResponse(status_code=503, content={"message": str(e)})
+    except HTTPException:
+        # Re-raise FastAPI exceptions (e.g. 413 from _stream_upload_to_tmp)
+        raise
     except requests.exceptions.ConnectTimeout:
         return JSONResponse(status_code=504, content={
             "message": "Could not connect to Looqz servers (timeout)."
@@ -312,12 +358,10 @@ async def generate(
             "detail": traceback.format_exc()[:400],
         })
     finally:
-        # ── Step 4: Queue non-blocking R2 cleanup ─────────────────────────────
-        # BackgroundTasks runs AFTER FastAPI sends the response — zero latency
-        # impact on the user. The R2 bucket lifecycle rule (24h) is the
-        # infra-level failsafe if this code path is skipped (e.g. OOM crash).
-        if uploaded_keys:
-            background_tasks.add_task(_delete_r2_objects, uploaded_keys)
+        # ── Always clean up /tmp files ────────────────────────────────────────
+        # Runs even on timeout, crash, or client disconnect.
+        # The sweeper daemon is the second line of defense for anything missed.
+        _cleanup_files(tmp_files)
 
     # ── Handle Looqz error responses ──────────────────────────────────────────
     if not response.ok:
