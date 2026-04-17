@@ -31,10 +31,14 @@ ALLOWED_EXTENSION_ID = os.getenv("ALLOWED_EXTENSION_ID", "")
 
 # Upload constraints
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB hard cap per file
-TMP_DIR          = Path("/tmp")
-TMP_PREFIX       = "looqz-"          # all our temp files start with this
+TMP_DIR          = Path("/tmp/looqz_vault")   # isolated subdirectory — not bare /tmp
+TMP_PREFIX       = "looqz-"                    # all temp files start with this
 SWEEPER_MAX_AGE  = 300               # 5 minutes — anything older gets swept
 SWEEPER_INTERVAL = 600               # 10 minutes between sweeper runs
+
+# Strict Looqz API key format: sk_live_ followed by exactly 32 alphanumeric chars.
+# Blocks oversized/malformed strings before any CPU or disk work happens.
+API_KEY_RE = re.compile(r"^sk_live_[a-zA-Z0-9]{32}$")
 
 # Strict regex for /tmp-image/{filename} — blocks directory traversal.
 # Only allows: alphanumeric, dashes, must end in .jpg. No slashes, dots, or backslashes.
@@ -76,19 +80,19 @@ app.add_middleware(
 
 
 # ── Background sweeper ───────────────────────────────────────────────────────
-# Daemon thread that wakes every 10 minutes and purges any looqz-*.jpg file
-# in /tmp older than 5 minutes. This is the infra-level failsafe — if a
-# request crashes, times out, or the user disconnects mid-generation, the
-# finally: block might not run. The sweeper guarantees disk doesn't fill up.
+# Daemon thread that wakes every 10 minutes and purges any .jpg file inside
+# /tmp/looqz_vault older than 5 minutes. This is the infra-level failsafe —
+# if a request crashes, times out, or the user disconnects mid-generation,
+# the finally: block might not run. The sweeper guarantees disk doesn't fill.
 
 def _sweeper_loop():
-    """Runs forever in a daemon thread. Scans /tmp for orphaned temp images."""
+    """Runs forever in a daemon thread. Scans looqz_vault for orphaned temp images."""
     while True:
         time.sleep(SWEEPER_INTERVAL)
         try:
             now = time.time()
             count = 0
-            for f in TMP_DIR.glob(f"{TMP_PREFIX}*.jpg"):
+            for f in TMP_DIR.glob("*.jpg"):
                 try:
                     age = now - f.stat().st_mtime
                     if age > SWEEPER_MAX_AGE:
@@ -104,6 +108,10 @@ def _sweeper_loop():
 
 @app.on_event("startup")
 def start_sweeper():
+    # Ensure the vault directory exists (Render wipes /tmp on each deploy)
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"[Looqz] Vault directory ready: {TMP_DIR}")
+
     t = threading.Thread(target=_sweeper_loop, daemon=True)
     t.start()
     print("[Looqz] Background sweeper started (interval=10min, max_age=5min).")
@@ -113,7 +121,7 @@ def start_sweeper():
 
 def _stream_upload_to_tmp(upload: UploadFile) -> Path:
     """
-    Streams an UploadFile to /tmp/looqz-<uuid>.jpg using constant memory.
+    Streams an UploadFile to /tmp/looqz_vault/looqz-<uuid>.jpg using constant memory.
     Raises HTTPException if the file exceeds MAX_UPLOAD_BYTES.
     Returns the Path to the written file.
     """
@@ -243,8 +251,8 @@ async def validate_key(request: Request, body: ValidateKeyRequest):
     placeholder images. Returns 200 (accepted) or 401 (invalid key).
     This endpoint accepts JSON so it remains simple — no binary uploads needed.
     """
-    if not body.api_key.startswith("sk_live_"):
-        return JSONResponse(status_code=400, content={"message": "Invalid key format."})
+    if not API_KEY_RE.match(body.api_key):
+        return JSONResponse(status_code=400, content={"message": "Invalid key format. Expected: sk_live_ + 32 alphanumeric characters."})
 
     loop = asyncio.get_event_loop()
     try:
@@ -299,10 +307,10 @@ async def generate(
          Sweeper daemon catches any orphans the finally misses.
     """
 
-    # Validate key format early — avoids unnecessary disk writes
-    if not api_key.startswith("sk_live_"):
+    # Validate key format early — rejects malformed/oversized keys before any disk I/O
+    if not API_KEY_RE.match(api_key):
         return JSONResponse(status_code=400, content={
-            "message": "Invalid API key format. Must start with sk_live_"
+            "message": "Invalid API key format. Expected: sk_live_ + 32 alphanumeric characters."
         })
 
     # Validate that exactly one cloth source was provided
