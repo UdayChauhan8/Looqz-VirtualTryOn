@@ -6,6 +6,7 @@ import shutil
 import asyncio
 import threading
 import requests
+import cloudscraper
 from contextlib import asynccontextmanager
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -49,6 +50,14 @@ SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9\-]+\.jpg$")
 # Clamped to 3 workers — Render free tier has 0.1 vCPU and 512 MB RAM.
 # This prevents CPU thrashing from too many concurrent requests.post calls.
 executor = ThreadPoolExecutor(max_workers=3)
+
+# ── Cloudscraper session ──────────────────────────────────────────────────────
+# Cloudflare blocks raw `requests.post()` from datacenter IPs (Render) with a
+# "Just a moment..." JS challenge page. cloudscraper solves these challenges
+# and mimics a real browser's TLS fingerprint. Drop-in replacement.
+scraper = cloudscraper.create_scraper(
+    browser={"browser": "chrome", "platform": "linux", "desktop": True}
+)
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
@@ -167,6 +176,7 @@ def _call_looqz(api_key: str, product_url: str, user_url: str) -> requests.Respo
     """
     Calls the Looqz generation API. Runs in the clamped thread pool.
     Both product_url and user_url must be publicly fetchable at call time.
+    Uses cloudscraper to bypass Cloudflare's TLS fingerprinting.
     """
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -174,16 +184,12 @@ def _call_looqz(api_key: str, product_url: str, user_url: str) -> requests.Respo
         "Accept": "application/json",
         "Origin": WHITELISTED_ORIGIN,
         "Referer": WHITELISTED_ORIGIN + "/",
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-        ),
     }
     payload = {
         "product_image_url": product_url,
         "user_image_url": user_url,
     }
-    return requests.post(
+    return scraper.post(
         LOOQZ_API_URL,
         headers=headers,
         json=payload,

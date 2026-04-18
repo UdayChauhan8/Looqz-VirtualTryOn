@@ -4,4 +4,5 @@ pydantic>=2.9.0
 python-dotenv>=1.0.1
 slowapi>=0.1.9
 requests>=2.31.0
+cloudscraper>=1.2.71
 python-multipart>=0.0.9
