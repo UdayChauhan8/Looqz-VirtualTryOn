@@ -2,10 +2,10 @@
 // Wrapping in IIFE to avoid polluting global scope
 (function () {
 
-  const PROXY_URL    = "http://127.0.0.1:8000/generate";     // Local testing
-  const VALIDATE_URL = "http://127.0.0.1:8000/validate-key"; // Key validation
-  // const PROXY_URL    = "https://your-proxy.onrender.com/generate";
-  // const VALIDATE_URL = "https://your-proxy.onrender.com/validate-key";
+  // const PROXY_URL    = "http://127.0.0.1:8000/generate";     // Local testing
+  // const VALIDATE_URL = "http://127.0.0.1:8000/validate-key"; // Key validation
+  const PROXY_URL    = "https://looqz-backend-q05q.onrender.com/generate";
+  const VALIDATE_URL = "https://looqz-backend-q05q.onrender.com/validate-key";
 
   const STATE = {
     apiKey: null,
