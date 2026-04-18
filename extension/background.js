@@ -93,18 +93,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // ── TRYON_WITH_BLOBS ──────────────────────────────────────────────────────
-  // The single secure try-on pipeline.
-  //
-  // Receives from content.js:
-  //   userPhotoBase64  — "data:image/jpeg;base64,..." string (JSON-safe)
-  //   clothImageUrl    — URL of the product image on the merchant site
-  //   apiKey           — Looqz API key
-  //   proxyUrl         — URL of our FastAPI /generate endpoint
-  //
-  // Steps:
-  //   1. Convert userPhotoBase64 string → Blob (avoids 33% JSON bloat)
-  //   2. Attempt fetch(clothImageUrl) → Blob
   // ── VALIDATE_KEY ──────────────────────────────────────────────────────────
   // Lightweight key check used by the API key save flow in content.js.
   // Sends a JSON POST to /validate-key on the proxy (not /generate).
@@ -263,7 +251,7 @@ async function handleTryOn({ userPhotoBase64, clothImageUrl, apiKey, proxyUrl })
   formData.append('user_image', userBlob, 'user.jpg');
 
   if (clothBlob) {
-    // Blob path: backend streams it into R2, generates a pre-signed URL
+    // Blob path: backend streams it to /tmp, serves via /tmp-image/ URL
     formData.append('product_image', clothBlob, 'cloth.jpg');
   } else {
     // URL fallback path: backend passes the URL directly to Looqz

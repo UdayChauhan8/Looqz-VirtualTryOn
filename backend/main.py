@@ -6,6 +6,7 @@ import shutil
 import asyncio
 import threading
 import requests
+from contextlib import asynccontextmanager
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
@@ -49,6 +50,22 @@ SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9\-]+\.jpg$")
 # This prevents CPU thrashing from too many concurrent requests.post calls.
 executor = ThreadPoolExecutor(max_workers=3)
 
+# ── Lifespan ──────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app):
+    # ── Startup ───────────────────────────────────────────────────────────────
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"[Looqz] Vault directory ready: {TMP_DIR}")
+
+    t = threading.Thread(target=_sweeper_loop, daemon=True)
+    t.start()
+    print("[Looqz] Background sweeper started (interval=10min, max_age=5min).")
+
+    yield
+    # ── Shutdown ──────────────────────────────────────────────────────────────
+    # Nothing to clean up — daemon thread dies with the process.
+
 # ── App ───────────────────────────────────────────────────────────────────────
 
 limiter = Limiter(key_func=get_remote_address)
@@ -57,6 +74,7 @@ app = FastAPI(
     title="Looqz Extension Proxy",
     description="Secure multipart proxy for the Looqz Virtual Try-On Chrome Extension.",
     version="4.0.0",
+    lifespan=lifespan,
 )
 
 app.state.limiter = limiter
@@ -106,15 +124,7 @@ def _sweeper_loop():
             print(f"[Looqz sweeper] Error during sweep: {e}")
 
 
-@app.on_event("startup")
-def start_sweeper():
-    # Ensure the vault directory exists (Render wipes /tmp on each deploy)
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"[Looqz] Vault directory ready: {TMP_DIR}")
-
-    t = threading.Thread(target=_sweeper_loop, daemon=True)
-    t.start()
-    print("[Looqz] Background sweeper started (interval=10min, max_age=5min).")
+# Startup logic moved into lifespan() context manager above.
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -254,7 +264,7 @@ async def validate_key(request: Request, body: ValidateKeyRequest):
     if not API_KEY_RE.match(body.api_key):
         return JSONResponse(status_code=400, content={"message": "Invalid key format. Expected: sk_live_ + 32 alphanumeric characters."})
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         response = await loop.run_in_executor(
             executor,
@@ -320,7 +330,7 @@ async def generate(
         })
 
     tmp_files: list[Path] = []
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     try:
         # ── Step 1: Stream user photo to /tmp ────────────────────────────────

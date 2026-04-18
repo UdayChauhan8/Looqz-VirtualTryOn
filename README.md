@@ -27,17 +27,19 @@ You can view the auto-generated Swagger documentation at `http://localhost:8000/
 
 ### Testing Proxy Endpoints
 ```bash
-# Health checks
+# Health check
 curl http://localhost:8000/health
 
-# Generate Try-on
-curl -X POST http://localhost:8000/generate \
+# Validate an API key
+curl -X POST http://localhost:8000/validate-key \
   -H "Content-Type: application/json" \
-  -d '{
-    "api_key": "sk_live_your_key",
-    "product_image_url": "https://example.com/jacket.jpg",
-    "user_image_url": "https://example.com/person.jpg"
-  }'
+  -d '{"api_key": "sk_live_your_key_here_32chars_long"}'
+
+# Generate Try-on (multipart/form-data)
+curl -X POST http://localhost:8000/generate \
+  -F "api_key=sk_live_your_key_here_32chars_long" \
+  -F "user_image=@/path/to/your/photo.jpg" \
+  -F "product_image_url=https://example.com/jacket.jpg"
 ```
 
 ## 2. Local Setup - Chrome Extension
@@ -54,10 +56,17 @@ curl -X POST http://localhost:8000/generate \
 
 1. Connect your GitHub repository to Render.
 2. Create a new **Web Service**.
-3. **Build Command:** `pip install -r backend/requirements.txt`
-4. **Start Command:** `cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT`
-5. **Environment Variables:**
-   - `WHITELISTED_ORIGIN`: Your Render deployment URL (`https://your-app.onrender.com`)
-   - `LOOQZ_API_URL`: `https://looqz.in/api/v1/public/generate-image`
+3. **Root Directory:** `backend`
+4. **Build Command:** `pip install -r requirements.txt`
+5. **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
 
-Make sure to update `PROXY_URL` in `extension/content.js` to match your newly deployed URL before compiling/zipping your extension for the Chrome Web Store.
+### Required Environment Variables
+
+| Variable | Value | Purpose |
+|---|---|---|
+| `BACKEND_URL` | `https://your-app.onrender.com` | Constructs `/tmp-image/` URLs that Looqz fetches |
+| `WHITELISTED_ORIGIN` | `https://your-app.onrender.com` | Sent as `Origin` header to the Looqz API |
+| `LOOQZ_API_URL` | `https://www.looqz.in/api/v1/public/generate-image` | Looqz generation endpoint |
+| `ALLOWED_EXTENSION_ID` | Your extension ID from `chrome://extensions` | Locks CORS to your extension only |
+
+> **Important:** After deploying, update `PROXY_URL` and `VALIDATE_URL` in `extension/content.js` (lines 5-6) to your Render URL before publishing to the Chrome Web Store.
