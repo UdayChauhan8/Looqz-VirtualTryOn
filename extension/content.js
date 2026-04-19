@@ -3,7 +3,7 @@
 (function () {
 
   // const PROXY_URL = "http://127.0.0.1:8000/generate";     // Local testing
-  const PROXY_URL    = "https://looqz-backend-q05q.onrender.com/generate";
+  const PROXY_URL = "https://looqz-backend-q05q.onrender.com";
   // ↑ Used by TRYON_WITH_BLOBS — derives /upload-image from this URL.
 
   const STATE = {
@@ -499,9 +499,9 @@
           // Attempt to fetch from ledger if logged in
           chrome.runtime.sendMessage({ action: "FETCH_LEDGER_CREDITS" }, async (ledgerRes) => {
             if (!chrome.runtime.lastError && ledgerRes && ledgerRes.credits !== undefined) {
-               STATE.creditsRemaining = ledgerRes.credits;
+              STATE.creditsRemaining = ledgerRes.credits;
             } else if (data.credits_remaining !== undefined) {
-               STATE.creditsRemaining = data.credits_remaining;
+              STATE.creditsRemaining = data.credits_remaining;
             }
 
             await setStorage({ apiKey: val, creditsRemaining: STATE.creditsRemaining });
@@ -682,9 +682,9 @@
         chrome.runtime.sendMessage({
           action: 'TRYON_WITH_BLOBS',
           userPhotoBase64: STATE.userPhotoBase64,
-          clothImageUrl:   STATE.productImageUrl,
-          apiKey:          STATE.apiKey,
-          proxyUrl:        PROXY_URL
+          clothImageUrl: STATE.productImageUrl,
+          apiKey: STATE.apiKey,
+          proxyUrl: PROXY_URL
         }, res => {
           if (chrome.runtime.lastError) {
             reject(new Error('Extension context invalidated. Please refresh the page.'));
@@ -755,19 +755,19 @@
           rImg.onload = () => {
             const uImg = new Image();
             uImg.onload = () => {
-               // Is user vertical? Is result horizontal?
-               if (uImg.width < uImg.height && rImg.width > rImg.height) {
-                  const cvs = document.createElement('canvas');
-                  cvs.width = rImg.height;
-                  cvs.height = rImg.width;
-                  const ctx = cvs.getContext('2d');
-                  ctx.translate(cvs.width / 2, cvs.height / 2);
-                  ctx.rotate(90 * Math.PI / 180);
-                  ctx.drawImage(rImg, -rImg.width / 2, -rImg.height / 2);
-                  resolve(cvs.toDataURL('image/jpeg', 0.95));
-               } else {
-                  resolve(STATE.resultImageUrl);
-               }
+              // Is user vertical? Is result horizontal?
+              if (uImg.width < uImg.height && rImg.width > rImg.height) {
+                const cvs = document.createElement('canvas');
+                cvs.width = rImg.height;
+                cvs.height = rImg.width;
+                const ctx = cvs.getContext('2d');
+                ctx.translate(cvs.width / 2, cvs.height / 2);
+                ctx.rotate(90 * Math.PI / 180);
+                ctx.drawImage(rImg, -rImg.width / 2, -rImg.height / 2);
+                resolve(cvs.toDataURL('image/jpeg', 0.95));
+              } else {
+                resolve(STATE.resultImageUrl);
+              }
             };
             uImg.onerror = () => resolve(STATE.resultImageUrl);
             uImg.src = STATE.userPhotoBase64;
@@ -832,15 +832,15 @@
     // ── Remove any stale window handlers from a previous injection cycle ────────
     // Without this, every re-injection appends NEW handlers on top of the old
     // ones, causing multiple misfires and memory leaks.
-    if (_sliderHandlers.mouseUp)   window.removeEventListener('mouseup',   _sliderHandlers.mouseUp);
+    if (_sliderHandlers.mouseUp) window.removeEventListener('mouseup', _sliderHandlers.mouseUp);
     if (_sliderHandlers.mouseMove) window.removeEventListener('mousemove', _sliderHandlers.mouseMove);
-    if (_sliderHandlers.touchEnd)  window.removeEventListener('touchend',  _sliderHandlers.touchEnd);
+    if (_sliderHandlers.touchEnd) window.removeEventListener('touchend', _sliderHandlers.touchEnd);
     if (_sliderHandlers.touchMove) window.removeEventListener('touchmove', _sliderHandlers.touchMove);
 
     // Store named references so the next injection can clean them up too
-    _sliderHandlers.mouseUp   = () => { isDragging = false; };
+    _sliderHandlers.mouseUp = () => { isDragging = false; };
     _sliderHandlers.mouseMove = (e) => { if (isDragging) updateSlider(e.clientX); };
-    _sliderHandlers.touchEnd  = () => { isDragging = false; };
+    _sliderHandlers.touchEnd = () => { isDragging = false; };
     _sliderHandlers.touchMove = (e) => {
       if (isDragging) {
         e.preventDefault();
@@ -849,12 +849,12 @@
     };
 
     container.addEventListener('mousedown', (e) => { isDragging = true; updateSlider(e.clientX); });
-    window.addEventListener('mouseup',   _sliderHandlers.mouseUp);
+    window.addEventListener('mouseup', _sliderHandlers.mouseUp);
     window.addEventListener('mousemove', _sliderHandlers.mouseMove);
 
     // Touch support
     container.addEventListener('touchstart', (e) => { isDragging = true; updateSlider(e.touches[0].clientX); });
-    window.addEventListener('touchend',  _sliderHandlers.touchEnd);
+    window.addEventListener('touchend', _sliderHandlers.touchEnd);
     window.addEventListener('touchmove', _sliderHandlers.touchMove, { passive: false });
   }
 
