@@ -254,8 +254,8 @@ async function uploadToProxy(blob, filename, uploadUrl) {
  *   4. Return the parsed JSON response.
  */
 async function handleTryOn({ userPhotoBase64, clothImageUrl, apiKey, proxyUrl }) {
-  // Derive the upload URL from proxyUrl (replace /generate → /upload-image)
-  const uploadUrl = proxyUrl.replace(/\/generate$/, '/upload-image');
+  // Derive the upload URL from proxyUrl
+  const uploadUrl = proxyUrl.replace(/\/generate$/, '').replace(/\/$/, '') + '/upload-image';
 
   // 1. Upload user photo to proxy
   const userBlob = base64ToBlob(userPhotoBase64);
