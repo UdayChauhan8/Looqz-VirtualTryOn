@@ -211,5 +211,17 @@ async def upload_image(
     except Exception as e:
         return JSONResponse(status_code=500, content={"message": f"Upload failed: {e}"})
 
-    url = f"{BACKEND_URL.rstrip('/')}/tmp-image/{path.name}"
+    # Dynamically build the absolute URL using the request
+    # This safely prevents 'relative URL' errors if BACKEND_URL is misconfigured or empty
+    base_url = str(request.base_url).rstrip('/')
+    
+    # Render routes via proxy, so if it's on Render or forwarded via HTTPS, strictly force https://
+    if "onrender.com" in base_url or request.headers.get("x-forwarded-proto") == "https":
+        base_url = base_url.replace("http://", "https://")
+        
+    # If for some reason base_url is still empty, fall back to backend config
+    if not base_url:
+        base_url = BACKEND_URL.rstrip('/')
+
+    url = f"{base_url}/tmp-image/{path.name}"
     return {"url": url}
