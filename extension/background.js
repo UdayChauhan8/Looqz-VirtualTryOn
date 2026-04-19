@@ -94,14 +94,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   // ── VALIDATE_KEY ──────────────────────────────────────────────────────────
-  // Lightweight key check used by the API key save flow in content.js.
-  // Sends a JSON POST to /validate-key on the proxy (not /generate).
-  // JSON is fine here because no binary images are involved.
+  // Validates the API key by calling the Looqz API directly from the browser.
+  // The service worker runs in the user's browser (residential IP) so
+  // Cloudflare lets it through — no proxy needed for this call.
   if (message.action === 'VALIDATE_KEY') {
-    fetch(message.validateUrl, {
+    fetch('https://www.looqz.in/api/v1/public/generate-image', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: message.apiKey }),
+      headers: {
+        'Authorization': `Bearer ${message.apiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        product_image_url: 'https://placehold.co/150x200/png',
+        user_image_url:    'https://placehold.co/150x200/png',
+      }),
     })
       .then(async res => {
         let data = {};
@@ -115,29 +122,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // ── TRYON_WITH_BLOBS ──────────────────────────────────────────────────────
   // The single secure try-on pipeline.
   //
-  // Receives from content.js:
-  //   userPhotoBase64  — "data:image/jpeg;base64,..." string (JSON-safe)
-  //   clothImageUrl    — URL of the product image on the merchant site
-  //   apiKey           — Looqz API key
-  //   proxyUrl         — URL of our FastAPI /generate endpoint
+  // Architecture (v5 — Cloudflare bypass):
+  //   The Looqz API is behind Cloudflare. Render datacenter IPs are blocked
+  //   (403). The service worker runs inside the user's real browser with their
+  //   residential IP — Cloudflare sees it as a real user and allows it.
   //
-  // Steps:
-  //   1. Convert userPhotoBase64 string → Blob (avoids 33% JSON bloat)
+  // Pipeline:
+  //   1. Upload user photo to proxy (/upload-image) → get public URL
   //   2. Attempt fetch(clothImageUrl) → Blob
-  //      CORS fallback: if fetch fails, send the URL string instead so
-  //      the backend can pass it directly to Looqz.
-  //   3. Build multipart/form-data and POST to proxyUrl.
-  //   4. Return the parsed JSON response (or an error object).
-  //
-  // No tmpfiles.org. No anonymous public hosts. User data never leaves
-  // the controlled pipeline: extension → your backend → Looqz API.
+  //      If that fails (CDN CORS), upload cloth blob to proxy too.
+  //      If cloth fetch fails entirely, pass URL directly to Looqz.
+  //   3. Call Looqz API directly from the service worker with public URLs.
+  //   4. Return parsed JSON response.
   if (message.action === 'TRYON_WITH_BLOBS') {
     handleTryOn(message).then(sendResponse).catch(err => {
       sendResponse({ error: err.message });
     });
     return true; // keep the message channel open for async response
   }
-
 
   // ── FETCH_LEDGER_CREDITS ──────────────────────────────────────────────────
   // Scrapes the Looqz dashboard to get the user's real-time credit balance.
@@ -202,13 +204,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 });
 
-// ── TRYON_WITH_BLOBS implementation ──────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
  * Converts a Base64 Data URL string to a Blob.
- * This is the correct way to cross the chrome.runtime.sendMessage boundary:
- * content.js sends a string (JSON-safe); background converts it to binary here.
- *
  * @param {string} dataUrl  e.g. "data:image/jpeg;base64,/9j/4AAQ..."
  * @returns {Blob}
  */
@@ -223,51 +222,75 @@ function base64ToBlob(dataUrl) {
 }
 
 /**
- * Core try-on handler.
- * Runs fully inside the service worker — has network access without CORS
- * restrictions that apply to content scripts on merchant pages.
+ * Uploads a single Blob to the proxy /upload-image endpoint.
+ * Returns the public URL string.
+ * @param {Blob} blob
+ * @param {string} filename
+ * @param {string} uploadUrl  e.g. "https://your-backend.onrender.com/upload-image"
+ * @returns {Promise<string>}
+ */
+async function uploadToProxy(blob, filename, uploadUrl) {
+  const form = new FormData();
+  form.append('image', blob, filename);
+  const res = await fetch(uploadUrl, { method: 'POST', body: form });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Proxy upload failed (${res.status}): ${body.slice(0, 120)}`);
+  }
+  const { url } = await res.json();
+  return url;
+}
+
+/**
+ * Core try-on handler — runs fully in the service worker.
+ *
+ * v5 Pipeline:
+ *   1. Upload user photo → proxy → get public URL
+ *   2. Try to fetch cloth image as Blob:
+ *        a. Success → upload cloth blob to proxy → get public URL
+ *        b. Failure → use raw clothImageUrl directly (Looqz fetches it itself)
+ *   3. Call Looqz API directly from the browser with the two public URLs.
+ *      The service worker has the user's residential IP — Cloudflare allows it.
+ *   4. Return the parsed JSON response.
  */
 async function handleTryOn({ userPhotoBase64, clothImageUrl, apiKey, proxyUrl }) {
-  // 1. Convert user photo Base64 string → Blob
-  const userBlob = base64ToBlob(userPhotoBase64);
+  // Derive the upload URL from proxyUrl (replace /generate → /upload-image)
+  const uploadUrl = proxyUrl.replace(/\/generate$/, '/upload-image');
 
-  // 2. Attempt to fetch the cloth image as a Blob.
-  //    Service workers bypass the page's CORS restrictions, but some CDNs
-  //    (Amazon, Myntra) still return 403. Wrap in try/catch and fall back
-  //    to sending the raw URL string so the backend can handle it directly.
-  let clothBlob = null;
+  // 1. Upload user photo to proxy
+  const userBlob = base64ToBlob(userPhotoBase64);
+  const userPublicUrl = await uploadToProxy(userBlob, 'user.jpg', uploadUrl);
+
+  // 2. Get cloth image URL
+  let clothPublicUrl = null;
   try {
     const clothRes = await fetch(clothImageUrl);
     if (!clothRes.ok) throw new Error(`HTTP ${clothRes.status}`);
-    clothBlob = await clothRes.blob();
+    const clothBlob = await clothRes.blob();
+    // Upload the cloth blob to the proxy too so Looqz can fetch it
+    clothPublicUrl = await uploadToProxy(clothBlob, 'cloth.jpg', uploadUrl);
   } catch (err) {
-    console.warn(`Looqz: cloth fetch failed (${err.message}), falling back to URL`);
-    // clothBlob stays null — we fall back to the URL path below
+    console.warn(`Looqz: cloth handling failed (${err.message}), using direct URL`);
+    // Fall back: pass the original URL directly — Looqz's servers fetch it
+    clothPublicUrl = clothImageUrl;
   }
 
-  // 3. Build multipart/form-data payload
-  const formData = new FormData();
-  formData.append('api_key', apiKey);
-  formData.append('user_image', userBlob, 'user.jpg');
-
-  if (clothBlob) {
-    // Blob path: backend streams it to /tmp, serves via /tmp-image/ URL
-    formData.append('product_image', clothBlob, 'cloth.jpg');
-  } else {
-    // URL fallback path: backend passes the URL directly to Looqz
-    formData.append('product_image_url', clothImageUrl);
-  }
-
-  // 4. POST multipart/form-data to our FastAPI proxy
-  const response = await fetch(proxyUrl, {
+  // 3. Call Looqz API directly from the browser (residential IP → CF allows it)
+  const looqzRes = await fetch('https://www.looqz.in/api/v1/public/generate-image', {
     method: 'POST',
-    body: formData
-    // Do NOT set Content-Type manually — browser sets it with the correct
-    // multipart boundary when body is a FormData instance.
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      product_image_url: clothPublicUrl,
+      user_image_url:    userPublicUrl,
+    }),
   });
 
   let data = {};
-  try { data = await response.json(); } catch (e) { /* non-JSON body */ }
+  try { data = await looqzRes.json(); } catch (e) { /* non-JSON body */ }
 
-  return { ok: response.ok, status: response.status, data };
+  return { ok: looqzRes.ok, status: looqzRes.status, data };
 }

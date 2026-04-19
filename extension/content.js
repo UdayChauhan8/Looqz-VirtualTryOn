@@ -2,10 +2,9 @@
 // Wrapping in IIFE to avoid polluting global scope
 (function () {
 
-  // const PROXY_URL    = "http://127.0.0.1:8000/generate";     // Local testing
-  // const VALIDATE_URL = "http://127.0.0.1:8000/validate-key"; // Key validation
+  // const PROXY_URL = "http://127.0.0.1:8000/generate";     // Local testing
   const PROXY_URL    = "https://looqz-backend-q05q.onrender.com/generate";
-  const VALIDATE_URL = "https://looqz-backend-q05q.onrender.com/validate-key";
+  // ↑ Used by TRYON_WITH_BLOBS — derives /upload-image from this URL.
 
   const STATE = {
     apiKey: null,
@@ -468,9 +467,8 @@
         // That endpoint sends a lightweight test request to Looqz and returns
         // 200 (valid), 401 (wrong key), or 503 (backend/network error).
         chrome.runtime.sendMessage({
-          action:      'VALIDATE_KEY',
-          validateUrl: VALIDATE_URL,
-          apiKey:      val
+          action: 'VALIDATE_KEY',
+          apiKey: val
         }, async (res) => {
           if (chrome.runtime.lastError) {
             keyError.textContent = "Please reload the page. Extension was updated.";
