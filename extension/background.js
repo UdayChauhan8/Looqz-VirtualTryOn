@@ -19,7 +19,8 @@ chrome.declarativeNetRequest.updateDynamicRules({
       ]
     },
     condition: {
-      urlFilter: '||looqz.in/api/*',
+      urlFilter: '*looqz.in*',
+      initiatorDomains: [chrome.runtime.id],
       resourceTypes: ['xmlhttprequest', 'other']
     }
   }]
