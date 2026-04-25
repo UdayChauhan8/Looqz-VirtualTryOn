@@ -2,7 +2,6 @@ import os
 import re
 import uuid
 import time
-import asyncio
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,12 +12,15 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
+import httpx
 
 load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 BACKEND_URL          = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+LOOQZ_API_URL        = os.getenv("LOOQZ_API_URL", "https://www.looqz.in/api/v1/public/generate-image")
+WHITELISTED_ORIGIN   = os.getenv("WHITELISTED_ORIGIN", "https://www.looqz.in")
 ALLOWED_EXTENSION_ID = os.getenv("ALLOWED_EXTENSION_ID", "")
 
 # Upload constraints
@@ -74,11 +76,11 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
     title="Looqz Extension Proxy",
     description=(
-        "Secure image-upload proxy for the Looqz Virtual Try-On Chrome Extension. "
-        "Receives image uploads, stores them temporarily in /tmp, and returns public "
-        "URLs. The extension then calls the Looqz API directly from the browser."
+        "Secure proxy for the Looqz Virtual Try-On Chrome Extension. "
+        "Receives image uploads, stores them temporarily in /tmp, and "
+        "proxies the Looqz generate-image API call with correct headers."
     ),
-    version="5.0.0",
+    version="6.0.0",
     lifespan=lifespan,
 )
 
@@ -141,6 +143,21 @@ def _cleanup(path: Path):
         pass
 
 
+def _build_base_url(request: Request) -> str:
+    """Build the absolute public base URL from the incoming request."""
+    base_url = str(request.base_url).rstrip('/')
+
+    # Render routes via proxy — force https if behind reverse proxy
+    if "onrender.com" in base_url or request.headers.get("x-forwarded-proto") == "https":
+        base_url = base_url.replace("http://", "https://")
+
+    # Fallback to env config
+    if not base_url:
+        base_url = BACKEND_URL.rstrip('/')
+
+    return base_url
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -148,7 +165,7 @@ def root():
     return {
         "service": "Looqz Extension Proxy",
         "status": "running",
-        "version": "5.0.0",
+        "version": "6.0.0",
         "cors_locked": bool(ALLOWED_EXTENSION_ID),
     }
 
@@ -185,9 +202,6 @@ async def serve_tmp_image(filename: str):
 
 
 # ── Image upload endpoint ─────────────────────────────────────────────────────
-# The extension uploads ONE image at a time. Backend saves it to /tmp and
-# returns a public URL. The extension then calls the Looqz API directly
-# from the browser (residential IP — bypasses Cloudflare naturally).
 
 @app.post("/upload-image")
 @limiter.limit("60/minute")
@@ -197,11 +211,6 @@ async def upload_image(
 ):
     """
     Receives a single image upload, saves it to /tmp, returns its public URL.
-
-    The Looqz API is called directly by the browser extension (background.js)
-    using the returned URL. This avoids the Cloudflare 403 that occurs when
-    server-side code on a datacenter IP tries to call the Looqz API.
-
     Response: { "url": "https://your-backend.onrender.com/tmp-image/looqz-xxx.jpg" }
     """
     try:
@@ -211,17 +220,74 @@ async def upload_image(
     except Exception as e:
         return JSONResponse(status_code=500, content={"message": f"Upload failed: {e}"})
 
-    # Dynamically build the absolute URL using the request
-    # This safely prevents 'relative URL' errors if BACKEND_URL is misconfigured or empty
-    base_url = str(request.base_url).rstrip('/')
-    
-    # Render routes via proxy, so if it's on Render or forwarded via HTTPS, strictly force https://
-    if "onrender.com" in base_url or request.headers.get("x-forwarded-proto") == "https":
-        base_url = base_url.replace("http://", "https://")
-        
-    # If for some reason base_url is still empty, fall back to backend config
-    if not base_url:
-        base_url = BACKEND_URL.rstrip('/')
-
+    base_url = _build_base_url(request)
     url = f"{base_url}/tmp-image/{path.name}"
     return {"url": url}
+
+
+# ── Generate endpoint (server-side proxy to Looqz API) ────────────────────────
+# The extension sends the API key + image URLs here.
+# The backend calls the Looqz API with full header control (Origin, Referer).
+# Python httpx is NOT a browser — it can set any header freely.
+# This completely eliminates the "API key not authorized for requesting domain"
+# error that occurs when Chrome's service worker sends Origin: chrome-extension://
+
+@app.post("/generate")
+@limiter.limit("30/minute")
+async def generate(request: Request):
+    """
+    Proxies the generate-image call to the Looqz API.
+
+    Expects JSON body:
+    {
+        "api_key": "sk_live_...",
+        "product_image_url": "https://...",
+        "user_image_url": "https://..."
+    }
+
+    Returns the Looqz API response as-is.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body.")
+
+    api_key = body.get("api_key", "")
+    product_image_url = body.get("product_image_url", "")
+    user_image_url = body.get("user_image_url", "")
+
+    if not api_key or not product_image_url or not user_image_url:
+        raise HTTPException(status_code=400, detail="Missing required fields: api_key, product_image_url, user_image_url")
+
+    # Call Looqz API from the server with correct Origin/Referer headers.
+    # Python httpx is NOT a browser — no header restrictions apply.
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Origin": WHITELISTED_ORIGIN,
+        "Referer": f"{WHITELISTED_ORIGIN}/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+
+    payload = {
+        "product_image_url": product_image_url,
+        "user_image_url": user_image_url,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(LOOQZ_API_URL, json=payload, headers=headers)
+
+        # Forward Looqz's response status and body directly to the extension
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"message": resp.text[:500]}
+
+        return JSONResponse(status_code=resp.status_code, content=data)
+
+    except httpx.TimeoutException:
+        return JSONResponse(status_code=504, content={"message": "Looqz API timed out. Try again."})
+    except Exception as e:
+        return JSONResponse(status_code=502, content={"message": f"Proxy error: {str(e)}"})

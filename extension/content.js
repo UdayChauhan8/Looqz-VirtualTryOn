@@ -463,12 +463,12 @@
       btnSaveKey.textContent = 'Validating...';
 
       try {
-        // Validate the key against our backend's /validate-key endpoint.
-        // That endpoint sends a lightweight test request to Looqz and returns
-        // 200 (valid), 401 (wrong key), or 503 (backend/network error).
+        // Validate the key against our backend proxy's /generate endpoint.
+        // The proxy forwards the request to Looqz with correct Origin headers.
         chrome.runtime.sendMessage({
           action: 'VALIDATE_KEY',
-          apiKey: val
+          apiKey: val,
+          proxyUrl: PROXY_URL
         }, async (res) => {
           if (chrome.runtime.lastError) {
             keyError.textContent = "Please reload the page. Extension was updated.";

@@ -1,13 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Looqz Virtual Try-On",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Try on clothes virtually from any shopping website using AI",
   "permissions": [
     "storage",
     "activeTab",
-    "scripting",
-    "declarativeNetRequest"
+    "scripting"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {
@@ -26,4 +25,3 @@
     "128": "icons/icon128.png"
   }
 }
-
