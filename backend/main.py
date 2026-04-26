@@ -5,33 +5,30 @@ import time
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, Request, UploadFile, File, HTTPException
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
-import httpx
 
 load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 BACKEND_URL          = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
-LOOQZ_API_URL        = os.getenv("LOOQZ_API_URL", "https://www.looqz.in/api/v1/public/generate-image")
-WHITELISTED_ORIGIN   = os.getenv("WHITELISTED_ORIGIN", "https://www.looqz.in")
 ALLOWED_EXTENSION_ID = os.getenv("ALLOWED_EXTENSION_ID", "")
 
 # Upload constraints
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024   # 10 MB hard cap per file
 TMP_DIR          = Path("/tmp/looqz_vault")
-TMP_PREFIX       = "looqz-"
 SWEEPER_MAX_AGE  = 300    # 5 minutes
 SWEEPER_INTERVAL = 600    # 10 minutes
 
 # Strict regex for /tmp-image/{filename} — blocks directory traversal.
-SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9\-]+\.jpg$")
+# Only matches files that our upload endpoint could have created.
+SAFE_FILENAME_RE = re.compile(r"^looqz-(user|cloth)-[a-zA-Z0-9\-]+\.jpg$")
 
 # ── Background sweeper ────────────────────────────────────────────────────────
 # Daemon thread that purges orphaned /tmp files older than 5 minutes.
@@ -76,11 +73,11 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
     title="Looqz Extension Proxy",
     description=(
-        "Secure proxy for the Looqz Virtual Try-On Chrome Extension. "
-        "Receives image uploads, stores them temporarily in /tmp, and "
-        "proxies the Looqz generate-image API call with correct headers."
+        "Secure image-hosting proxy for the Looqz Virtual Try-On Chrome Extension. "
+        "Receives image uploads, stores them temporarily in /tmp, and returns public "
+        "URLs. The extension calls the Looqz API directly from the browser."
     ),
-    version="6.0.0",
+    version="7.0.0",
     lifespan=lifespan,
 )
 
@@ -107,13 +104,13 @@ app.add_middleware(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _stream_upload_to_tmp(upload: UploadFile) -> Path:
+def _stream_upload_to_tmp(upload: UploadFile, prefix: str = "looqz-") -> Path:
     """
-    Streams an UploadFile to /tmp/looqz_vault/looqz-<uuid>.jpg in 8 KB chunks.
+    Streams an UploadFile to /tmp/looqz_vault/<prefix><uuid>.jpg in 8 KB chunks.
     Raises HTTP 413 if the file exceeds MAX_UPLOAD_BYTES.
     Returns the Path to the written file.
     """
-    filename = f"{TMP_PREFIX}{uuid.uuid4()}.jpg"
+    filename = f"{prefix}{uuid.uuid4()}.jpg"
     dest = TMP_DIR / filename
 
     written = 0
@@ -165,7 +162,7 @@ def root():
     return {
         "service": "Looqz Extension Proxy",
         "status": "running",
-        "version": "6.0.0",
+        "version": "7.0.0",
         "cors_locked": bool(ALLOWED_EXTENSION_ID),
     }
 
@@ -183,14 +180,11 @@ def health():
 async def serve_tmp_image(filename: str):
     """
     Serves a temporary image from /tmp/looqz_vault.
-    - Strict regex: alphanumeric + dashes + .jpg only
-    - Enforces looqz- prefix — can't serve arbitrary /tmp files
+    - Strict regex: only looqz-(user|cloth)-<uuid>.jpg
+    - Can't serve arbitrary /tmp files — regex enforces our naming pattern
     - File auto-deleted by the sweeper within 5 minutes
     """
     if not SAFE_FILENAME_RE.match(filename):
-        raise HTTPException(status_code=400, detail="Invalid filename.")
-
-    if not filename.startswith(TMP_PREFIX):
         raise HTTPException(status_code=400, detail="Invalid filename.")
 
     filepath = TMP_DIR / filename
@@ -202,92 +196,62 @@ async def serve_tmp_image(filename: str):
 
 
 # ── Image upload endpoint ─────────────────────────────────────────────────────
+# Accepts both images in a single request (1 round trip instead of 2).
+# The extension then calls the Looqz API directly from the browser.
 
-@app.post("/upload-image")
+@app.post("/upload")
 @limiter.limit("60/minute")
-async def upload_image(
+async def upload(
     request: Request,
-    image: UploadFile = File(...),
+    user_image: UploadFile = File(...),
+    cloth_image: UploadFile = File(None),
+    cloth_image_url: str = Form(None),
 ):
     """
-    Receives a single image upload, saves it to /tmp, returns its public URL.
-    Response: { "url": "https://your-backend.onrender.com/tmp-image/looqz-xxx.jpg" }
+    Accepts user photo + cloth image in a single request, returns public URLs.
+
+    - user_image: required, binary upload (the user's photo)
+    - cloth_image: optional, binary upload (if extension fetched the cloth image)
+    - cloth_image_url: optional, string (if CORS blocked the fetch — echo back as-is)
+
+    At least one of cloth_image or cloth_image_url must be provided.
+
+    Response:
+    {
+        "user_image_url": "https://your-backend.onrender.com/tmp-image/looqz-user-xxx.jpg",
+        "cloth_image_url": "https://your-backend.onrender.com/tmp-image/looqz-cloth-xxx.jpg"
+    }
     """
+    if not cloth_image and not cloth_image_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either cloth_image (file) or cloth_image_url (string).",
+        )
+
+    # Upload user photo
     try:
-        path = _stream_upload_to_tmp(image)
+        user_path = _stream_upload_to_tmp(user_image, prefix="looqz-user-")
     except HTTPException:
         raise
     except Exception as e:
-        return JSONResponse(status_code=500, content={"message": f"Upload failed: {e}"})
+        return JSONResponse(status_code=500, content={"message": f"User image upload failed: {e}"})
 
     base_url = _build_base_url(request)
-    url = f"{base_url}/tmp-image/{path.name}"
-    return {"url": url}
+    result = {"user_image_url": f"{base_url}/tmp-image/{user_path.name}"}
 
-
-# ── Generate endpoint (server-side proxy to Looqz API) ────────────────────────
-# The extension sends the API key + image URLs here.
-# The backend calls the Looqz API with full header control (Origin, Referer).
-# Python httpx is NOT a browser — it can set any header freely.
-# This completely eliminates the "API key not authorized for requesting domain"
-# error that occurs when Chrome's service worker sends Origin: chrome-extension://
-
-@app.post("/generate")
-@limiter.limit("30/minute")
-async def generate(request: Request):
-    """
-    Proxies the generate-image call to the Looqz API.
-
-    Expects JSON body:
-    {
-        "api_key": "sk_live_...",
-        "product_image_url": "https://...",
-        "user_image_url": "https://..."
-    }
-
-    Returns the Looqz API response as-is.
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body.")
-
-    api_key = body.get("api_key", "")
-    product_image_url = body.get("product_image_url", "")
-    user_image_url = body.get("user_image_url", "")
-
-    if not api_key or not product_image_url or not user_image_url:
-        raise HTTPException(status_code=400, detail="Missing required fields: api_key, product_image_url, user_image_url")
-
-    # Call Looqz API from the server with correct Origin/Referer headers.
-    # Python httpx is NOT a browser — no header restrictions apply.
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Origin": WHITELISTED_ORIGIN,
-        "Referer": f"{WHITELISTED_ORIGIN}/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    }
-
-    payload = {
-        "product_image_url": product_image_url,
-        "user_image_url": user_image_url,
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(LOOQZ_API_URL, json=payload, headers=headers)
-
-        # Forward Looqz's response status and body directly to the extension
+    # Upload cloth image (binary) or echo URL (string passthrough)
+    if cloth_image:
         try:
-            data = resp.json()
-        except Exception:
-            data = {"message": resp.text[:500]}
+            cloth_path = _stream_upload_to_tmp(cloth_image, prefix="looqz-cloth-")
+            result["cloth_image_url"] = f"{base_url}/tmp-image/{cloth_path.name}"
+        except HTTPException:
+            raise
+        except Exception as e:
+            # Clean up user image if cloth upload fails
+            _cleanup(user_path)
+            return JSONResponse(status_code=500, content={"message": f"Cloth image upload failed: {e}"})
+    else:
+        # CORS blocked the cloth fetch — pass the original URL through
+        result["cloth_image_url"] = cloth_image_url
 
-        return JSONResponse(status_code=resp.status_code, content=data)
-
-    except httpx.TimeoutException:
-        return JSONResponse(status_code=504, content={"message": "Looqz API timed out. Try again."})
-    except Exception as e:
-        return JSONResponse(status_code=502, content={"message": f"Proxy error: {str(e)}"})
+    return result

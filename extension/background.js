@@ -1,19 +1,9 @@
-// background.js — Looqz Virtual Try-On (v6)
+// background.js — Looqz Virtual Try-On (v7)
 //
-// Architecture v6:
-//   The Looqz API checks the Origin header to verify domain authorization.
-//   Chrome extensions send "Origin: chrome-extension://<id>" which Looqz rejects.
-//   Chrome hard-blocks any attempt to spoof Origin from extensions (even via DNR).
-//
-//   Solution: Route ALL Looqz API calls through our Python backend proxy.
-//   Python httpx is NOT a browser — it can set Origin to anything.
-//   The backend sets Origin: https://www.looqz.in on every outgoing request.
-//
-//   Flow:
-//     1. Extension uploads images to proxy (/upload-image) → gets public URLs
-//     2. Extension sends URLs + API key to proxy (/generate)
-//     3. Proxy calls Looqz API with correct Origin header
-//     4. Proxy returns Looqz response to extension
+// Architecture:
+//   Step 1: Upload images to Render proxy (/upload) → get public URLs
+//   Step 2: Call Looqz API directly from service worker (residential IP)
+//   The backend NEVER talks to Looqz. It only hosts temporary images.
 
 // ── Toolbar click: PING pattern (bulletproof Path A / Path B detection) ───────
 //
@@ -109,19 +99,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   // ── VALIDATE_KEY ──────────────────────────────────────────────────────────
-  // Validates the API key by sending a test request through our backend proxy.
-  // The proxy sets correct Origin headers so Looqz accepts the domain.
+  // Validates the API key by calling the Looqz API directly from the browser.
+  // The service worker has the user's residential IP — Cloudflare lets it through.
+  // No proxy needed. No Origin spoofing needed (requires Track A: API key with
+  // "Chrome Extension" domain config that skips Origin validation).
   if (message.action === 'VALIDATE_KEY') {
-    const proxyGenerateUrl = message.proxyUrl.replace(/\/$/, '') + '/generate';
-
-    fetch(proxyGenerateUrl, {
+    fetch('https://www.looqz.in/api/v1/public/generate-image', {
       method: 'POST',
       headers: {
+        'Authorization': `Bearer ${message.apiKey}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
       body: JSON.stringify({
-        api_key: message.apiKey,
         product_image_url: 'https://placehold.co/150x200/png',
         user_image_url:    'https://placehold.co/150x200/png',
       }),
@@ -136,13 +126,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   // ── TRYON_WITH_BLOBS ──────────────────────────────────────────────────────
-  // v6 Pipeline — ALL calls go through our backend proxy:
-  //   1. Upload user photo to proxy (/upload-image) → get public URL
-  //   2. Attempt fetch(clothImageUrl) → Blob → upload to proxy too
-  //      If that fails (CORS), pass URL directly
-  //   3. Call proxy /generate with URLs + API key
-  //      Proxy calls Looqz API with correct Origin header
-  //   4. Return parsed JSON response
+  // v7 Pipeline — two-step direct architecture:
+  //   1. Upload both images to Render proxy (/upload) → get public URLs
+  //   2. Call Looqz API directly from service worker (residential IP)
+  //   The backend NEVER touches the Looqz API.
   if (message.action === 'TRYON_WITH_BLOBS') {
     handleTryOn(message).then(sendResponse).catch(err => {
       sendResponse({ error: err.message });
@@ -231,76 +218,55 @@ function base64ToBlob(dataUrl) {
 }
 
 /**
- * Uploads a single Blob to the proxy /upload-image endpoint.
- * Returns the public URL string.
- * @param {Blob} blob
- * @param {string} filename
- * @param {string} uploadUrl  e.g. "https://your-backend.onrender.com/upload-image"
- * @returns {Promise<string>}
- */
-async function uploadToProxy(blob, filename, uploadUrl) {
-  const form = new FormData();
-  form.append('image', blob, filename);
-  const res = await fetch(uploadUrl, { method: 'POST', body: form });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Proxy upload failed (${res.status}): ${body.slice(0, 120)}`);
-  }
-  const { url } = await res.json();
-  return url;
-}
-
-/**
  * Core try-on handler — runs fully in the service worker.
  *
- * v6 Pipeline (all calls through backend proxy):
- *   1. Upload user photo → proxy /upload-image → get public URL
- *   2. Try to fetch cloth image as Blob:
- *        a. Success → upload cloth blob to proxy → get public URL
- *        b. Failure → use raw clothImageUrl directly (Looqz fetches it itself)
- *   3. Call proxy /generate with URLs + API key.
- *      The backend sets Origin: https://www.looqz.in and calls Looqz API.
- *   4. Return the parsed JSON response.
+ * v7 Pipeline (two-step direct architecture):
+ *   1. Upload both images → Render proxy /upload → get public URLs (1 request)
+ *   2. Call Looqz API directly from the browser (residential IP → CF passes)
+ *   The backend NEVER touches the Looqz API.
  */
 async function handleTryOn({ userPhotoBase64, clothImageUrl, apiKey, proxyUrl }) {
-  const baseUrl = proxyUrl.replace(/\/generate$/, '').replace(/\/$/, '');
-  const uploadUrl = baseUrl + '/upload-image';
-  const generateUrl = baseUrl + '/generate';
+  const uploadUrl = proxyUrl.replace(/\/$/, '') + '/upload';
 
-  // 1. Upload user photo to proxy
+  // ── Step 1: Upload both images to Render in one request ───────────────────
   const userBlob = base64ToBlob(userPhotoBase64);
-  const userPublicUrl = await uploadToProxy(userBlob, 'user.jpg', uploadUrl);
+  const form = new FormData();
+  form.append('user_image', userBlob, 'user.jpg');
 
-  // 2. Get cloth image URL
-  let clothPublicUrl = null;
+  // Try to fetch cloth image as blob; if CORS fails, pass URL as string
   try {
     const clothRes = await fetch(clothImageUrl);
     if (!clothRes.ok) throw new Error(`HTTP ${clothRes.status}`);
     const clothBlob = await clothRes.blob();
-    // Upload the cloth blob to the proxy too so Looqz can fetch it
-    clothPublicUrl = await uploadToProxy(clothBlob, 'cloth.jpg', uploadUrl);
+    form.append('cloth_image', clothBlob, 'cloth.jpg');
   } catch (err) {
-    console.warn(`Looqz: cloth handling failed (${err.message}), using direct URL`);
-    // Fall back: pass the original URL directly — Looqz's servers fetch it
-    clothPublicUrl = clothImageUrl;
+    console.warn(`Looqz: cloth fetch failed (${err.message}), passing URL directly`);
+    form.append('cloth_image_url', clothImageUrl);
   }
 
-  // 3. Call our backend /generate which proxies to Looqz with correct Origin
-  const proxyRes = await fetch(generateUrl, {
+  const uploadRes = await fetch(uploadUrl, { method: 'POST', body: form });
+  if (!uploadRes.ok) {
+    const body = await uploadRes.text();
+    throw new Error(`Upload failed (${uploadRes.status}): ${body.slice(0, 120)}`);
+  }
+  const urls = await uploadRes.json();
+
+  // ── Step 2: Call Looqz API directly (residential IP → CF passes) ──────────
+  const looqzRes = await fetch('https://www.looqz.in/api/v1/public/generate-image', {
     method: 'POST',
     headers: {
+      'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     },
     body: JSON.stringify({
-      api_key: apiKey,
-      product_image_url: clothPublicUrl,
-      user_image_url: userPublicUrl,
+      product_image_url: urls.cloth_image_url,
+      user_image_url:    urls.user_image_url,
     }),
   });
 
   let data = {};
-  try { data = await proxyRes.json(); } catch (e) { /* non-JSON body */ }
+  try { data = await looqzRes.json(); } catch (e) { /* non-JSON body */ }
 
-  return { ok: proxyRes.ok, status: proxyRes.status, data };
+  return { ok: looqzRes.ok, status: looqzRes.status, data };
 }

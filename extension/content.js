@@ -4,7 +4,7 @@
 
   // const PROXY_URL = "http://127.0.0.1:8000/generate";     // Local testing
   const PROXY_URL = "https://looqz-backend-q05q.onrender.com";
-  // ↑ Used by TRYON_WITH_BLOBS — derives /upload-image from this URL.
+  // ↑ Used by TRYON_WITH_BLOBS — derives /upload from this base URL.
 
   const STATE = {
     apiKey: null,
@@ -463,12 +463,11 @@
       btnSaveKey.textContent = 'Validating...';
 
       try {
-        // Validate the key against our backend proxy's /generate endpoint.
-        // The proxy forwards the request to Looqz with correct Origin headers.
+        // Validate the key by calling the Looqz API directly from background.js.
+        // The service worker has the user's residential IP — Cloudflare allows it.
         chrome.runtime.sendMessage({
           action: 'VALIDATE_KEY',
-          apiKey: val,
-          proxyUrl: PROXY_URL
+          apiKey: val
         }, async (res) => {
           if (chrome.runtime.lastError) {
             keyError.textContent = "Please reload the page. Extension was updated.";
