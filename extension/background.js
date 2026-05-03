@@ -101,8 +101,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // ── VALIDATE_KEY ──────────────────────────────────────────────────────────
   // Validates the API key by calling the Looqz API directly from the browser.
   // The service worker has the user's residential IP — Cloudflare lets it through.
-  // No proxy needed. No Origin spoofing needed (requires Track A: API key with
-  // "Chrome Extension" domain config that skips Origin validation).
+  // No proxy needed. The user's API key must have "Chrome Extension" domain config
+  // which whitelists this extension's ID as an allowed Origin.
   if (message.action === 'VALIDATE_KEY') {
     fetch('https://looqz.in/api/v1/public/generate-image', {
       method: 'POST',
@@ -140,7 +140,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // ── FETCH_LEDGER_CREDITS ──────────────────────────────────────────────────
   // Scrapes the Looqz dashboard to get the user's real-time credit balance.
   if (message.action === 'FETCH_LEDGER_CREDITS') {
-    fetch('https://www.looqz.in/credits', { redirect: 'error' })
+    fetch('https://looqz.in/credits', { redirect: 'error' })
       .then(r => r.text())
       .then(html => {
         let credits = null;

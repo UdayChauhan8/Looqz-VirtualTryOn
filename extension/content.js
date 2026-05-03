@@ -2,7 +2,6 @@
 // Wrapping in IIFE to avoid polluting global scope
 (function () {
 
-  // const PROXY_URL = "http://127.0.0.1:8000/generate";     // Local testing
   const PROXY_URL = "https://looqz-backend-q05q.onrender.com";
   // ↑ Used by TRYON_WITH_BLOBS — derives /upload from this base URL.
 
@@ -177,7 +176,7 @@
 
   <!-- SCREEN 4: RESULT -->
   <div id="looqz-screen-result" class="looqz-screen">
-    <h3 style="margin-top:0">🎉 Here's your look!</h3>
+    <h3 style="margin-top:0;margin-bottom:12px">🎉 Here's your look!</h3>
     
     <div class="looqz-comparison" id="looqz-comparison">
       <div class="looqz-comparison-after">

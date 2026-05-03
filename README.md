@@ -1,15 +1,80 @@
 # Looqz Virtual Try-On
 
-A production-quality Chrome extension and backend proxy for Looqz Virtual Try-On.
-Built using Vanilla JS, Manifest V3, and a single-file FastAPI stateless proxy.
+A Chrome extension that lets you virtually try on clothes from **any** shopping website using AI. Browse Amazon, Myntra, or any e-commerce site — pick a product, upload your photo, and see how it looks on you.
 
-## Architecture
-- **Frontend (Extension):** Native `chrome.storage.local` combined with DOM injection and manipulation.
-- **Backend (Proxy):** FastAPI deployed on Render to bypass Chrome Extension Origin/CORS limitations. No database, no auth handling.
+## How It Works
 
-## 1. Local Setup - Backend Proxy
+1. **Upload your photo** — taken once, saved locally on your device
+2. **Pick a clothing item** — click any product image on the page
+3. **See your look** — AI generates a realistic try-on image in seconds
 
-The FastAPI backend only has 6 dependencies and one file.
+## For Users
+
+### Installation
+
+1. Install **Looqz Virtual Try-On** from the [Chrome Web Store](#)
+2. Go to [looqz.in](https://looqz.in) and sign up for an account
+3. Navigate to **Developer** → **Create API Key** → select **Chrome Extension**
+4. Copy your API key (`sk_live_...`)
+
+### Usage
+
+1. Visit any shopping website (Amazon, Myntra, Flipkart, etc.)
+2. Click the **Looqz** icon in your Chrome toolbar → sidebar opens
+3. Paste your API key → click **Save & Start**
+4. Upload your photo (drag & drop or click to browse)
+5. Pick a clothing item:
+   - The extension auto-detects the main product image, **or**
+   - Click **Pick from Website** → click any image on the page
+6. Click **✨ Try On!**
+7. View the result with the Before/After slider
+8. **Download** or **Share** your look
+
+> 🔒 Your API key and photos are stored **only on your device** — never on our servers.
+
+---
+
+## For Developers
+
+### Architecture (v7)
+
+```
+Chrome Extension                    Render Proxy              Looqz API
+┌──────────────┐                 ┌──────────────┐        ┌──────────────┐
+│ background.js│──POST /upload──►│   main.py    │        │  looqz.in    │
+│              │                 │  (images     │        │              │
+│              │                 │   only)      │◄───────│  Fetches     │
+│              │──POST /api/v1──────────────────────────►│  images      │
+│              │  generate-image │              │        │  from Render  │
+└──────────────┘  (direct call)  └──────────────┘        └──────────────┘
+```
+
+- **Extension** calls the Looqz API **directly** from the user's browser (residential IP bypasses Cloudflare)
+- **Render proxy** only hosts temporary images — it never talks to the Looqz API
+- Images are auto-deleted after 5 minutes by a background sweeper
+
+### Project Structure
+
+```
+Looqz/
+├── extension/
+│   ├── manifest.json      # MV3 manifest — permissions & entry points
+│   ├── background.js      # Service worker — API orchestration
+│   ├── content.js         # Sidebar UI — injected into web pages
+│   ├── content.css        # Sidebar styling — dark theme
+│   ├── picker.js          # Image selection overlay
+│   └── icons/             # Extension icons (16, 48, 128px)
+│
+├── backend/
+│   ├── main.py            # FastAPI server — image hosting only
+│   ├── requirements.txt   # Python dependencies
+│   └── .env.example       # Environment variable template
+│
+├── .gitignore
+└── README.md
+```
+
+### Local Setup — Backend
 
 ```bash
 cd backend
@@ -17,56 +82,66 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-```
-
-Start the local server:
-```bash
 uvicorn main:app --reload
 ```
-You can view the auto-generated Swagger documentation at `http://localhost:8000/docs`.
 
-### Testing Proxy Endpoints
+API docs at `http://localhost:8000/docs`
+
+#### Testing Endpoints
+
 ```bash
 # Health check
 curl http://localhost:8000/health
 
-# Validate an API key
-curl -X POST http://localhost:8000/validate-key \
-  -H "Content-Type: application/json" \
-  -d '{"api_key": "sk_live_your_key_here_32chars_long"}'
+# Upload images (returns public URLs)
+curl -X POST http://localhost:8000/upload \
+  -F "user_image=@photo.jpg" \
+  -F "cloth_image=@shirt.jpg"
 
-# Generate Try-on (multipart/form-data)
-curl -X POST http://localhost:8000/generate \
-  -F "api_key=sk_live_your_key_here_32chars_long" \
-  -F "user_image=@/path/to/your/photo.jpg" \
-  -F "product_image_url=https://example.com/jacket.jpg"
+# Verify /upload exists
+curl http://localhost:8000/
+# → {"service":"Looqz Extension Proxy","version":"7.0.0",...}
 ```
 
-## 2. Local Setup - Chrome Extension
+### Local Setup — Chrome Extension
 
-1. Go to `chrome://extensions` in Google Chrome or Edge.
-2. Toggle on **Developer Mode** (top right corner).
-3. Click **Load unpacked**.
-4. Select the `extension/` folder from this repository.
-5. Go to any shopping website (e.g., amazon.com, myntra.com).
-6. Click the newly added **Looqz Virtual Try-On** icon in your toolbar.
-7. Paste your `sk_live_...` API key.
+1. Go to `chrome://extensions` in Chrome
+2. Toggle on **Developer Mode** (top right)
+3. Click **Load unpacked** → select the `extension/` folder
+4. Visit any shopping website → click the Looqz toolbar icon
 
-## 3. Render Deployment (Backend)
+### Render Deployment
 
-1. Connect your GitHub repository to Render.
-2. Create a new **Web Service**.
+1. Connect your GitHub repository to [Render](https://render.com)
+2. Create a new **Web Service**
 3. **Root Directory:** `backend`
 4. **Build Command:** `pip install -r requirements.txt`
 5. **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
 
-### Required Environment Variables
+#### Environment Variables
 
 | Variable | Value | Purpose |
 |---|---|---|
-| `BACKEND_URL` | `https://your-app.onrender.com` | Constructs `/tmp-image/` URLs that Looqz fetches |
-| `WHITELISTED_ORIGIN` | `https://your-app.onrender.com` | Sent as `Origin` header to the Looqz API |
-| `LOOQZ_API_URL` | `https://www.looqz.in/api/v1/public/generate-image` | Looqz generation endpoint |
-| `ALLOWED_EXTENSION_ID` | Your extension ID from `chrome://extensions` | Locks CORS to your extension only |
+| `BACKEND_URL` | `https://your-app.onrender.com` | Constructs public `/tmp-image/` URLs |
+| `ALLOWED_EXTENSION_ID` | Your Chrome Web Store extension ID | Locks CORS to your extension only |
 
-> **Important:** After deploying, update `PROXY_URL` and `VALIDATE_URL` in `extension/content.js` (lines 5-6) to your Render URL before publishing to the Chrome Web Store.
+> After deploying, update `PROXY_URL` in `extension/content.js` (line 6) to your Render URL.
+
+### Security
+
+| Layer | Protection |
+|---|---|
+| API Key | Bearer token authentication (Looqz API) |
+| Domain Whitelist | Chrome extension ID as allowed Origin |
+| CORS | Render locked to extension ID only |
+| Rate Limiting | 60 req/min on both Render and Looqz |
+| File Security | Strict regex blocks directory traversal |
+| Disk Protection | Sweeper deletes temp files after 5 min |
+| Upload Limit | 10 MB per file, enforced mid-stream |
+
+## Tech Stack
+
+- **Extension:** Vanilla JS, Manifest V3, Chrome APIs
+- **Backend:** Python, FastAPI, Uvicorn
+- **Hosting:** Render (free tier)
+- **AI:** Looqz Virtual Try-On API
