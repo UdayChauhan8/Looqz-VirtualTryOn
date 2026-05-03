@@ -176,7 +176,7 @@ def health():
 # The extension uploads images here. This route lets the Looqz API fetch them.
 # ONLY serves files matching the strict naming pattern — no traversal possible.
 
-@app.get("/tmp-image/{filename}")
+@app.api_route("/tmp-image/{filename}", methods=["GET", "HEAD"])
 async def serve_tmp_image(filename: str):
     """
     Serves a temporary image from /tmp/looqz_vault.
