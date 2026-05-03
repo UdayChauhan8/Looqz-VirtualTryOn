@@ -207,6 +207,8 @@ async def upload(
     cloth_image: UploadFile = File(None),
     cloth_image_url: str = Form(None),
 ):
+    
+    
     """
     Accepts user photo + cloth image in a single request, returns public URLs.
 
@@ -222,6 +224,10 @@ async def upload(
         "cloth_image_url": "https://your-backend.onrender.com/tmp-image/looqz-cloth-xxx.jpg"
     }
     """
+    print(f"[Looqz /upload] HIT — user_image={user_image.filename}, "
+          f"cloth_image={cloth_image.filename if cloth_image else None}, "
+          f"cloth_image_url={cloth_image_url}")
+
     if not cloth_image and not cloth_image_url:
         raise HTTPException(
             status_code=400,
