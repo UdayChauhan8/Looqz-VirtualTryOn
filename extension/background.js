@@ -104,7 +104,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // No proxy needed. No Origin spoofing needed (requires Track A: API key with
   // "Chrome Extension" domain config that skips Origin validation).
   if (message.action === 'VALIDATE_KEY') {
-    fetch('https://www.looqz.in/api/v1/public/generate-image', {
+    fetch('https://looqz.in/api/v1/public/generate-image', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${message.apiKey}`,
@@ -252,7 +252,7 @@ async function handleTryOn({ userPhotoBase64, clothImageUrl, apiKey, proxyUrl })
   const urls = await uploadRes.json();
 
   // ── Step 2: Call Looqz API directly (residential IP → CF passes) ──────────
-  const looqzRes = await fetch('https://www.looqz.in/api/v1/public/generate-image', {
+  const looqzRes = await fetch('https://looqz.in/api/v1/public/generate-image', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
