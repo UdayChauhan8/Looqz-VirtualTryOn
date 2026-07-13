@@ -207,8 +207,6 @@ async def upload(
     cloth_image: UploadFile = File(None),
     cloth_image_url: str = Form(None),
 ):
-    
-    
     """
     Accepts user photo + cloth image in a single request, returns public URLs.
 
