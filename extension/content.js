@@ -68,8 +68,21 @@
   <!-- SCREEN 1: API KEY -->
   <div id="looqz-screen-apikey" class="looqz-screen">
     <h3 style="margin-top:0">Welcome! 👋</h3>
-    <p style="color:#9CA3AF;line-height:1.5;">Enter your Looqz API key to start trying on clothes from any website.</p>
+    <p style="color:#9CA3AF;line-height:1.5;margin-bottom:16px;">Enter your Looqz API key to start trying on clothes from any website.</p>
     
+    <div style="background:#1A1A1A; border:1px solid #2A2A2A; border-radius:8px; padding:12px; margin-bottom:16px; font-size:13px; color:#D1D5DB; line-height:1.6;">
+      <div style="font-weight:600; color:#fff; margin-bottom:8px;">How to setup:</div>
+      <ul style="margin:0; padding-left:20px;">
+        <li style="margin-bottom:6px;">Go to <b>looqz.in</b> &rarr; <b>Developer</b> &rarr; <b>API Keys</b></li>
+        <li style="margin-bottom:6px;">Create a key and select <b>Custom</b> domain</li>
+        <li style="margin-bottom:6px;">Set Allowed Domain to your Extension ID: <br>
+          <code style="background:#000;padding:2px 4px;border-radius:4px;user-select:all;word-break:break-all;display:inline-block;margin-top:4px;margin-bottom:2px;">hellloagipopgbgabmifdjolaokfpkba</code><br>
+          <span style="color:#9CA3AF;font-size:11px;">(Check this in chrome://extensions)</span>
+        </li>
+        <li>Copy and paste your API key below</li>
+      </ul>
+    </div>
+
     <input type="password" id="looqz-apikey-input" class="looqz-input" placeholder="sk_live_..." autocomplete="off">
     <div id="looqz-apikey-error" class="looqz-error-text">Keys look like: sk_live_ followed by 32 characters</div>
 
@@ -418,7 +431,7 @@
 
     // Screen: Default Settings Links
     document.getElementById('looqz-my-tryons').addEventListener('click', () => window.open('https://www.looqz.in/my-tryons'));
-    document.getElementById('looqz-get-key').addEventListener('click', () => window.open('https://www.looqz.in/developer'));
+    document.getElementById('looqz-get-key').addEventListener('click', () => window.open('https://www.looqz.in/developer/api-keys'));
 
     document.getElementById('looqz-change-key').addEventListener('click', () => {
       clearStorage(['apiKey']);

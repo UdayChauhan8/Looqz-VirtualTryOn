@@ -24,8 +24,8 @@ Install **Looqz Virtual Try-On** from the [Chrome Web Store](#).
 4. In **Domain Configuration**, select **Custom**
 5. In the **Allowed Domains** field, enter your extension ID:
    ```
-   aonpndnfndcbnnplhmaldnblkegpgmgn
-   ```
+hellloagipopgbgabmifdjolaokfpkba
+Inspect views   ```
    > **How to find your Extension ID:** Open `chrome://extensions/` → find "Looqz Virtual Try-On" → the ID is shown below the extension name.
 6. Click **Create** and copy your API key (`sk_live_...`)
 
@@ -87,60 +87,6 @@ Looqz/
 ├── .gitignore
 └── README.md
 ```
-
-### Local Setup — Backend
-
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-uvicorn main:app --reload
-```
-
-API docs available at `http://localhost:8000/docs`
-
-#### Testing Endpoints
-
-```bash
-# Health check
-curl http://localhost:8000/health
-
-# Upload images (returns public URLs)
-curl -X POST http://localhost:8000/upload \
-  -F "user_image=@photo.jpg" \
-  -F "cloth_image=@shirt.jpg"
-
-# Root check
-curl http://localhost:8000/
-# → {"service":"Looqz Extension Proxy","version":"7.0.0",...}
-```
-
-### Local Setup — Chrome Extension
-
-1. Go to `chrome://extensions` in Chrome
-2. Toggle on **Developer Mode** (top right)
-3. Click **Load unpacked** → select the `extension/` folder
-4. Visit any shopping website → click the Looqz toolbar icon
-
-### Render Deployment
-
-1. Connect your GitHub repository to [Render](https://render.com)
-2. Create a new **Web Service**
-3. **Root Directory:** `backend`
-4. **Build Command:** `pip install -r requirements.txt`
-5. **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
-
-#### Environment Variables
-
-| Variable | Value | Purpose |
-|---|---|---|
-| `BACKEND_URL` | `https://your-app.onrender.com` | Constructs public `/tmp-image/` URLs |
-| `ALLOWED_EXTENSION_ID` | Your Chrome Web Store extension ID | Locks CORS to your extension only |
-
-> **Note:** After deploying, update `PROXY_URL` in `extension/content.js` (line 5) to your Render URL.
-
 ### Security
 
 | Layer | Protection |
