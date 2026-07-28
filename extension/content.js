@@ -160,6 +160,13 @@
       <button id="looqz-btn-tryon" class="looqz-btn-primary" disabled>✨ Try On!</button>
       <div id="looqz-tryon-error" class="looqz-error-text" style="display:none;margin-top:12px;text-align:center;"></div>
     </div>
+    
+    <div style="margin-top:24px; text-align:center; padding-top:16px; border-top:1px solid #2A2A2A;">
+      <a href="https://paypal.me/UdayChauhan8" target="_blank" style="text-decoration:none; display:inline-flex; align-items:center; gap:8px; background:#FFC439; color:#000; padding:8px 16px; border-radius:8px; font-weight:600; font-size:13px; transition: opacity 0.2s;">
+        ☕ Buy me a coffee
+      </a>
+      <div style="font-size:11px; color:#9CA3AF; margin-top:8px;">Support Looqz development!</div>
+    </div>
 
   </div>
 
