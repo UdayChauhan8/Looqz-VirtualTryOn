@@ -448,8 +448,11 @@
       switchScreen('screen-apikey');
     });
 
-    document.getElementById('looqz-reset-ext').addEventListener('click', () => {
-      chrome.runtime.sendMessage({ action: "CLEAR_STORAGE" });
+    document.getElementById('looqz-reset-ext').addEventListener('click', async () => {
+      await new Promise(r => chrome.runtime.sendMessage({ action: "CLEAR_STORAGE" }, (res) => {
+        if (chrome.runtime.lastError) return r(); // swallow if context died
+        r(res);
+      }));
       STATE.apiKey = null;
       STATE.userPhotoBase64 = null;
       STATE.productImageUrl = null;
