@@ -698,6 +698,8 @@
           action: 'TRYON_WITH_BLOBS',
           userPhotoBase64: STATE.userPhotoBase64,
           clothImageUrl: STATE.productImageUrl,
+          productPageUrl: window.location.href,
+          productTitle: document.title,
           apiKey: STATE.apiKey,
           proxyUrl: PROXY_URL
         }, res => {

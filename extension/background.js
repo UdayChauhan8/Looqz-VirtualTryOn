@@ -225,7 +225,7 @@ function base64ToBlob(dataUrl) {
  *   2. Call Looqz API directly from the browser (residential IP → CF passes)
  *   The backend NEVER touches the Looqz API.
  */
-async function handleTryOn({ userPhotoBase64, clothImageUrl, apiKey, proxyUrl }) {
+async function handleTryOn({ userPhotoBase64, clothImageUrl, productPageUrl, productTitle, apiKey, proxyUrl }) {
   const uploadUrl = proxyUrl.replace(/\/$/, '') + '/upload';
 
   // ── Step 1: Upload both images to Render in one request ───────────────────
@@ -262,6 +262,8 @@ async function handleTryOn({ userPhotoBase64, clothImageUrl, apiKey, proxyUrl })
     body: JSON.stringify({
       product_image_url: urls.cloth_image_url,
       user_image_url:    urls.user_image_url,
+      product_page_url:  productPageUrl,
+      product_title:     productTitle,
     }),
   });
 
