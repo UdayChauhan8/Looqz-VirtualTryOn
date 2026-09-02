@@ -50,22 +50,17 @@ Inspect views   ```
 
 ### Architecture (v7)
 
-The extension uses a two-step direct architecture:
+The extension uses a direct architecture:
 
 ```
-Chrome Extension                    Render Proxy              Looqz API
-┌──────────────┐                 ┌──────────────┐        ┌──────────────┐
-│ background.js│──POST /upload──►│   main.py    │        │  looqz.in    │
-│              │                 │  (temp image │        │              │
-│              │                 │   hosting)   │◄───────│  Fetches     │
-│              │──POST /api/v1──────────────────────────►│  images from │
-│              │  generate-image │              │        │  Render      │
-└──────────────┘  (direct call)  └──────────────┘        └──────────────┘
+Chrome Extension
+┌──────────────┐
+│ background.js│──multipart/form-data──► https://looqz.in/api/v1/public/generate-image
+└──────────────┘
 ```
 
 - **Extension** calls the Looqz API **directly** from the user's browser (residential IP bypasses Cloudflare)
-- **Render proxy** only hosts temporary images — it never talks to the Looqz API
-- Images are auto-deleted after 5 minutes by a background sweeper daemon
+- **Looqz** stores uploaded images in Google Cloud Storage, generates public or signed URLs internally, and runs the try-on pipeline
 
 ### Project Structure
 
@@ -79,11 +74,6 @@ Looqz/
 │   ├── picker.js          # Image selection overlay
 │   └── icons/             # Extension icons (16, 48, 128px)
 │
-├── backend/
-│   ├── main.py            # FastAPI server — image hosting only
-│   ├── requirements.txt   # Python dependencies
-│   └── .env.example       # Environment variable template
-│
 ├── .gitignore
 └── README.md
 ```
@@ -93,15 +83,10 @@ Looqz/
 |---|---|
 | API Key | Bearer token authentication (Looqz API) |
 | Domain Whitelist | Extension ID as allowed Origin hostname |
-| CORS | Render proxy locked to extension ID only |
-| Rate Limiting | 60 req/min on both Render and Looqz API |
-| File Security | Strict regex blocks directory traversal |
-| Disk Protection | Sweeper deletes temp files after 5 min |
-| Upload Limit | 10 MB per file, enforced mid-stream |
+| Rate Limiting | 60 req/min on Looqz API |
+| Upload Limit | 10 MB per file, enforced by the API |
 
 ## Tech Stack
 
 - **Extension:** Vanilla JS, Manifest V3, Chrome APIs
-- **Backend:** Python, FastAPI, Uvicorn
-- **Hosting:** Render (free tier)
 - **AI:** Looqz Virtual Try-On API

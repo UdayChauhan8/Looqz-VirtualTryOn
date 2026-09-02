@@ -42,7 +42,7 @@ function activatePickerMode() {
   if (!tooltip) {
     tooltip = document.createElement('div');
     tooltip.id = 'looqz-picker-tooltip';
-    tooltip.textContent = '🖱 Click any product image • Esc to cancel';
+    tooltip.textContent = 'Click any product image  ·  Esc to cancel';
     document.body.appendChild(tooltip);
   }
 

@@ -1,17 +1,14 @@
 import os
 import re
 import uuid
-import time
-import threading
-from contextlib import asynccontextmanager
-from pathlib import Path
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
+from google.cloud import storage
 
 load_dotenv()
 
@@ -19,66 +16,21 @@ load_dotenv()
 
 BACKEND_URL          = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 ALLOWED_EXTENSION_ID = os.getenv("ALLOWED_EXTENSION_ID", "")
+GCS_BUCKET_NAME      = os.getenv("GCS_BUCKET_NAME", "")
+GCS_PUBLIC_BASE_URL  = os.getenv("GCS_PUBLIC_BASE_URL", "").rstrip("/")
 
 # Upload constraints
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024   # 10 MB hard cap per file
-TMP_DIR          = Path("/tmp/looqz_vault")
-SWEEPER_MAX_AGE  = 300    # 5 minutes
-SWEEPER_INTERVAL = 600    # 10 minutes
-
-# Strict regex for /tmp-image/{filename} — blocks directory traversal.
-# Only matches files that our upload endpoint could have created.
-SAFE_FILENAME_RE = re.compile(r"^looqz-(user|cloth)-[a-zA-Z0-9\-]+\.jpg$")
-
-# ── Background sweeper ────────────────────────────────────────────────────────
-# Daemon thread that purges orphaned /tmp files older than 5 minutes.
-
-def _sweeper_loop():
-    """Runs forever in a daemon thread. Scans looqz_vault for orphaned temp images."""
-    while True:
-        time.sleep(SWEEPER_INTERVAL)
-        try:
-            now = time.time()
-            count = 0
-            for f in TMP_DIR.glob("*.jpg"):
-                try:
-                    if now - f.stat().st_mtime > SWEEPER_MAX_AGE:
-                        f.unlink(missing_ok=True)
-                        count += 1
-                except Exception:
-                    pass
-            if count:
-                print(f"[Looqz sweeper] Purged {count} orphaned temp file(s).")
-        except Exception as e:
-            print(f"[Looqz sweeper] Error during sweep: {e}")
-
-
-# ── Lifespan ──────────────────────────────────────────────────────────────────
-
-@asynccontextmanager
-async def lifespan(app):
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"[Looqz] Vault directory ready: {TMP_DIR}")
-    t = threading.Thread(target=_sweeper_loop, daemon=True)
-    t.start()
-    print("[Looqz] Background sweeper started (interval=10min, max_age=5min).")
-    yield
-    # Nothing to clean up — daemon thread dies with the process.
-
-
-# ── App ───────────────────────────────────────────────────────────────────────
-
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="Looqz Extension Proxy",
     description=(
         "Secure image-hosting proxy for the Looqz Virtual Try-On Chrome Extension. "
-        "Receives image uploads, stores them temporarily in /tmp, and returns public "
+        "Receives image uploads, stores them in Google Cloud Storage, and returns public "
         "URLs. The extension calls the Looqz API directly from the browser."
     ),
     version="7.0.0",
-    lifespan=lifespan,
 )
 
 app.state.limiter = limiter
@@ -102,57 +54,47 @@ app.add_middleware(
 )
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+def _get_gcs_client() -> storage.Client:
+    if not GCS_BUCKET_NAME:
+        raise HTTPException(
+            status_code=500,
+            detail="GCS_BUCKET_NAME is not configured.",
+        )
+    return storage.Client()
 
-def _stream_upload_to_tmp(upload: UploadFile, prefix: str = "looqz-") -> Path:
+
+def _upload_to_gcs(upload: UploadFile, prefix: str) -> str:
     """
-    Streams an UploadFile to /tmp/looqz_vault/<prefix><uuid>.jpg in 8 KB chunks.
-    Raises HTTP 413 if the file exceeds MAX_UPLOAD_BYTES.
-    Returns the Path to the written file.
+    Streams an UploadFile to Google Cloud Storage and returns a public URL.
+    Objects are written directly to GCS; nothing is stored on local disk.
     """
-    filename = f"{prefix}{uuid.uuid4()}.jpg"
-    dest = TMP_DIR / filename
+    client = _get_gcs_client()
+    bucket = client.bucket(GCS_BUCKET_NAME)
+    object_name = f"{prefix}{uuid.uuid4()}.jpg"
+    blob = bucket.blob(object_name)
 
     written = 0
-    with open(dest, "wb") as f:
+    with blob.open("wb", content_type=upload.content_type or "image/jpeg") as f:
         while True:
             chunk = upload.file.read(8192)
             if not chunk:
                 break
             written += len(chunk)
             if written > MAX_UPLOAD_BYTES:
-                f.close()
-                dest.unlink(missing_ok=True)
+                try:
+                    blob.delete()
+                except Exception:
+                    pass
                 raise HTTPException(
                     status_code=413,
                     detail=f"Upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.",
                 )
             f.write(chunk)
 
-    return dest
+    if GCS_PUBLIC_BASE_URL:
+        return f"{GCS_PUBLIC_BASE_URL}/{object_name}"
 
-
-def _cleanup(path: Path):
-    """Silently deletes a temp file. Sweeper catches anything missed."""
-    try:
-        path.unlink(missing_ok=True)
-    except Exception:
-        pass
-
-
-def _build_base_url(request: Request) -> str:
-    """Build the absolute public base URL from the incoming request."""
-    base_url = str(request.base_url).rstrip('/')
-
-    # Render routes via proxy — force https if behind reverse proxy
-    if "onrender.com" in base_url or request.headers.get("x-forwarded-proto") == "https":
-        base_url = base_url.replace("http://", "https://")
-
-    # Fallback to env config
-    if not base_url:
-        base_url = BACKEND_URL.rstrip('/')
-
-    return base_url
+    return f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{object_name}"
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -222,7 +164,7 @@ def privacy_policy():
     <p>The Extension accesses the following data solely to provide its virtual try-on functionality:</p>
     <ul>
       <li><strong>API Key:</strong> A Looqz API key you provide. This key is stored locally in your browser using <code>chrome.storage.local</code> and is sent directly to the Looqz API (<a href="https://looqz.in">looqz.in</a>) to authenticate try-on requests.</li>
-      <li><strong>User Photo:</strong> A photo you voluntarily upload. This photo is stored locally on your device using <code>chrome.storage.local</code>. When you initiate a try-on, the photo is temporarily uploaded to our image hosting server solely so the Looqz API can access it for processing. The uploaded file is automatically deleted within 5 minutes.</li>
+      <li><strong>User Photo:</strong> A photo you voluntarily upload. This photo is stored locally on your device using <code>chrome.storage.local</code>. When you initiate a try-on, the photo is uploaded to our image hosting backend and stored in Google Cloud Storage so the Looqz API can access it for processing.</li>
       <li><strong>Clothing Image URL:</strong> The URL of a clothing image you select from a shopping website. This URL is passed to the Looqz API to generate the try-on result. It is not stored persistently.</li>
     </ul>
 
@@ -249,7 +191,7 @@ def privacy_policy():
     <h2>4. Data Storage</h2>
     <ul>
       <li><strong>Local storage only:</strong> Your API key and uploaded photo are stored using <code>chrome.storage.local</code>, which keeps data entirely on your device. This data is never synced to any cloud service.</li>
-      <li><strong>Temporary image hosting:</strong> When you initiate a try-on, your photo is temporarily uploaded to our server to provide the Looqz API with an accessible URL. These temporary files are automatically deleted within 5 minutes by an automated background process.</li>
+      <li><strong>Image hosting:</strong> When you initiate a try-on, your photo is uploaded to our backend and stored in Google Cloud Storage to provide the Looqz API with an accessible URL.</li>
     </ul>
 
     <h2>5. Third-Party Services</h2>
@@ -308,29 +250,6 @@ def privacy_policy():
 </html>"""
 
 
-# ── Hardened temp image serving ───────────────────────────────────────────────
-# The extension uploads images here. This route lets the Looqz API fetch them.
-# ONLY serves files matching the strict naming pattern — no traversal possible.
-
-@app.api_route("/tmp-image/{filename}", methods=["GET", "HEAD"])
-async def serve_tmp_image(filename: str):
-    """
-    Serves a temporary image from /tmp/looqz_vault.
-    - Strict regex: only looqz-(user|cloth)-<uuid>.jpg
-    - Can't serve arbitrary /tmp files — regex enforces our naming pattern
-    - File auto-deleted by the sweeper within 5 minutes
-    """
-    if not SAFE_FILENAME_RE.match(filename):
-        raise HTTPException(status_code=400, detail="Invalid filename.")
-
-    filepath = TMP_DIR / filename
-
-    if not filepath.is_file():
-        raise HTTPException(status_code=404, detail="File not found.")
-
-    return FileResponse(filepath, media_type="image/jpeg")
-
-
 # ── Image upload endpoint ─────────────────────────────────────────────────────
 # Accepts both images in a single request (1 round trip instead of 2).
 # The extension then calls the Looqz API directly from the browser.
@@ -354,8 +273,8 @@ async def upload(
 
     Response:
     {
-        "user_image_url": "https://your-backend.onrender.com/tmp-image/looqz-user-xxx.jpg",
-        "cloth_image_url": "https://your-backend.onrender.com/tmp-image/looqz-cloth-xxx.jpg"
+        "user_image_url": "https://storage.googleapis.com/<bucket>/looqz-user-xxx.jpg",
+        "cloth_image_url": "https://storage.googleapis.com/<bucket>/looqz-cloth-xxx.jpg"
     }
     """
     if not cloth_image and not cloth_image_url:
@@ -364,30 +283,23 @@ async def upload(
             detail="Provide either cloth_image (file) or cloth_image_url (string).",
         )
 
-    # Upload user photo
     try:
-        user_path = _stream_upload_to_tmp(user_image, prefix="looqz-user-")
+        user_url = _upload_to_gcs(user_image, prefix="looqz-user-")
     except HTTPException:
         raise
     except Exception as e:
         return JSONResponse(status_code=500, content={"message": f"User image upload failed: {e}"})
 
-    base_url = _build_base_url(request)
-    result = {"user_image_url": f"{base_url}/tmp-image/{user_path.name}"}
+    result = {"user_image_url": user_url}
 
-    # Upload cloth image (binary) or echo URL (string passthrough)
     if cloth_image:
         try:
-            cloth_path = _stream_upload_to_tmp(cloth_image, prefix="looqz-cloth-")
-            result["cloth_image_url"] = f"{base_url}/tmp-image/{cloth_path.name}"
+            result["cloth_image_url"] = _upload_to_gcs(cloth_image, prefix="looqz-cloth-")
         except HTTPException:
             raise
         except Exception as e:
-            # Clean up user image if cloth upload fails
-            _cleanup(user_path)
             return JSONResponse(status_code=500, content={"message": f"Cloth image upload failed: {e}"})
     else:
-        # CORS blocked the cloth fetch — pass the original URL through
         result["cloth_image_url"] = cloth_image_url
 
     return result

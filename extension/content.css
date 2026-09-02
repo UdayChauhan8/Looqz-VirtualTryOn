@@ -1,577 +1,1289 @@
-/* ----- RESET & BASE (dark gen-z) ----- */
+/* ============================================================================
+   Looqz Virtual Try-On — sidebar UI
+   ----------------------------------------------------------------------------
+   This stylesheet is injected into arbitrary third-party pages (Myntra, Amazon,
+   Ajio, …). Two consequences shape everything below:
+
+   1. EVERY component rule is prefixed with `#looqz-sidebar` so it carries an
+      id in its specificity (1,x,y) and cannot be overridden by the host page's
+      own `p {}` / `button {}` / `.btn {}` declarations.
+   2. A scoped reset neutralises inherited host styles on the element types we
+      actually use, instead of a blanket `* { all: unset }` which would also
+      wipe our own cascade.
+
+   Design tokens live in one place (`:root` scoped to the sidebar) so the whole
+   surface can be re-themed from ~20 lines.
+   ========================================================================= */
+
 #looqz-sidebar {
+  /* ---- surfaces: near-black, three steps of elevation ---- */
+  --lq-bg: #09090b;
+  --lq-surface: #101014;
+  --lq-surface-2: #16161c;
+  --lq-surface-3: #1d1d25;
+
+  /* ---- hairlines ---- */
+  --lq-line: rgba(255, 255, 255, 0.07);
+  --lq-line-strong: rgba(255, 255, 255, 0.13);
+
+  /* ---- text: 3 levels, never more ---- */
+  --lq-text: #f4f4f6;
+  --lq-text-2: #a1a1aa;
+  --lq-text-3: #6b6b76;
+
+  /* ---- one accent, used sparingly ---- */
+  --lq-accent: #7c5cff;
+  --lq-accent-soft: rgba(124, 92, 255, 0.14);
+  --lq-accent-text: #b9a4ff;
+
+  /* ---- status ---- */
+  --lq-ok: #4ade80;
+  --lq-warn: #fbbf24;
+  --lq-bad: #fb7185;
+
+  /* ---- radii: a real scale, not 11 arbitrary values ---- */
+  --lq-r-sm: 8px;
+  --lq-r-md: 12px;
+  --lq-r-lg: 16px;
+  --lq-r-xl: 22px;
+  --lq-r-full: 999px;
+
+  --lq-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ---------------------------------------------------------------------------
+   SCOPED RESET
+   Only the element types the sidebar actually renders. `color` is deliberately
+   NOT reset via a wildcard — that would out-specify our own colour classes.
+   ------------------------------------------------------------------------ */
+#looqz-sidebar,
+#looqz-sidebar *,
+#looqz-sidebar *::before,
+#looqz-sidebar *::after {
+  box-sizing: border-box;
+}
+
+#looqz-sidebar div,
+#looqz-sidebar span,
+#looqz-sidebar p,
+#looqz-sidebar h1,
+#looqz-sidebar h2,
+#looqz-sidebar h3,
+#looqz-sidebar h4,
+#looqz-sidebar ul,
+#looqz-sidebar ol,
+#looqz-sidebar li,
+#looqz-sidebar code,
+#looqz-sidebar label,
+#looqz-sidebar a,
+#looqz-sidebar button,
+#looqz-sidebar input,
+#looqz-sidebar img,
+#looqz-sidebar svg {
   margin: 0;
   padding: 0;
-  box-sizing: border-box;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  font-style: normal;
+  line-height: inherit;
+  letter-spacing: inherit;
+  text-transform: none;
+  text-decoration: none;
+  text-shadow: none;
+  text-align: left;
+  float: none;
+  position: static;
+  visibility: visible;
+  min-width: 0;
+  max-width: none;
+  box-shadow: none;
+  transform: none;
 }
 
-#looqz-sidebar {
-  background: #0c0c0e;
-  color: #ecedf0;
+#looqz-sidebar ul,
+#looqz-sidebar ol {
+  list-style: none;
 }
 
-/* ----- SIDEBAR CONTAINER (slide-in) ----- */
+#looqz-sidebar button {
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+#looqz-sidebar input {
+  -webkit-appearance: none;
+  appearance: none;
+  color: inherit;
+}
+
+#looqz-sidebar img,
+#looqz-sidebar svg {
+  display: block;
+  max-width: 100%;
+}
+
+/* Icons: one size, one stroke weight, colour follows text. */
+#looqz-sidebar .looqz-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+#looqz-sidebar .looqz-icon-lg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ---------------------------------------------------------------------------
+   SHELL
+   ------------------------------------------------------------------------ */
 #looqz-sidebar {
   position: fixed;
   top: 0;
   right: 0;
-  width: 380px;
+  width: 384px;
   max-width: 92vw;
   height: 100vh;
-  background: #121215;
-  border-left: 1px solid rgba(255, 255, 255, 0.04);
-  box-shadow: -20px 0 40px -12px rgba(0, 0, 0, 0.8);
   z-index: 2147483647;
+
   display: flex;
   flex-direction: column;
-  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
-  transform: translateX(0%);
-  opacity: 1;
   overflow: hidden;
-  backdrop-filter: blur(2px);
-  color: #ecedf0;
+
+  background: var(--lq-bg);
+  color: var(--lq-text);
+  color-scheme: dark;
+  border-left: 1px solid var(--lq-line);
+  box-shadow: -24px 0 60px -20px rgba(0, 0, 0, 0.85);
+
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: -0.006em;
+  text-align: left;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+
+  transform: translateX(0);
+  opacity: 1;
+  transition: transform 0.34s var(--lq-ease), opacity 0.2s ease;
 }
 
 #looqz-sidebar.looqz-hidden {
-  transform: translateX(105%);
+  transform: translateX(104%);
   opacity: 0;
   pointer-events: none;
-  border-left: none;
 }
 
-body.looqz-sidebar-open {
-  overflow: hidden;
+/* A soft violet bloom at the top edge — the one purely decorative flourish,
+   kept behind everything so it never interferes with hit-testing. */
+#looqz-sidebar::before {
+  content: '';
+  position: absolute;
+  top: -140px;
+  right: -80px;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(124, 92, 255, 0.16), transparent 68%);
+  pointer-events: none;
+  z-index: 0;
 }
 
-/* ----- HEADER (glass-morphism) ----- */
-#looqz-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px 12px 20px;
-  background: rgba(18, 18, 21, 0.7);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+/* NOTE: `body.looqz-sidebar-open` is still toggled by content.js but is
+   deliberately given no `overflow: hidden` here.
+   The previous version locked host-page scrolling whenever the sidebar opened,
+   which broke the "Pick garment" flow — you could not scroll the product page
+   to reach an image below the fold. The sidebar is a fixed overlay and does not
+   need the scroll lock. The class is kept as a styling hook. */
+
+/* Focus rings: visible for keyboard users, absent for mouse users. */
+#looqz-sidebar :focus {
+  outline: none;
+}
+#looqz-sidebar :focus-visible {
+  outline: 2px solid var(--lq-accent);
+  outline-offset: 2px;
+  border-radius: var(--lq-r-sm);
+}
+
+/* ---------------------------------------------------------------------------
+   HEADER
+   NOTE: these are written as `#looqz-sidebar #looqz-header` rather than plain
+   `#looqz-header`. The scoped reset above matches `#looqz-sidebar div` — one id
+   plus one type — which out-specifies a lone id selector and would otherwise
+   reset the padding/position/font declared here.
+   ------------------------------------------------------------------------ */
+#looqz-sidebar #looqz-header {
+  position: relative;
+  z-index: 1;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 60px;
+  padding: 0 14px 0 18px;
+  border-bottom: 1px solid var(--lq-line);
 }
 
-#looqz-logo {
+#looqz-sidebar #looqz-logo {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-weight: 700;
-  font-size: 20px;
-  letter-spacing: -0.3px;
-  background: linear-gradient(135deg, #b388ff, #82b1ff);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--lq-text);
 }
-#looqz-logo span:first-child {
-  display: inline-block;
-  width: 28px;
-  height: 28px;
-  background: radial-gradient(circle at 30% 30%, #b388ff, #7c4dff);
-  border-radius: 10px;
-  -webkit-text-fill-color: transparent;
-  box-shadow: 0 4px 12px rgba(123, 77, 255, 0.25);
+#looqz-sidebar #looqz-logo .looqz-logo-img {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  object-fit: contain;
+  background: #000;
+  border: 1px solid var(--lq-line);
 }
 
-#looqz-header-right {
+#looqz-sidebar #looqz-header-right {
   display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.looqz-credits-badge {
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(4px);
-  padding: 4px 12px 4px 10px;
-  border-radius: 30px;
-  font-size: 12px;
-  font-weight: 500;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  color: #b9bcc8;
-  letter-spacing: 0.2px;
-  display: none;
   align-items: center;
   gap: 4px;
 }
-.looqz-credits-green { color: #75d07d; border-color: rgba(117, 208, 125, 0.15); }
-.looqz-credits-orange { color: #f9b86c; border-color: rgba(249, 184, 108, 0.15); }
-.looqz-credits-red { color: #f77b7b; border-color: rgba(247, 123, 123, 0.15); }
 
-.looqz-icon-btn {
-  background: transparent;
-  border: none;
-  color: #a5a9b8;
-  font-size: 18px;
-  cursor: pointer;
-  padding: 6px 8px;
-  border-radius: 12px;
-  transition: 0.2s;
-  line-height: 1;
-  display: flex;
+#looqz-sidebar .looqz-credits-badge {
+  display: none; /* JS flips to inline-flex */
   align-items: center;
-  justify-content: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  margin-right: 4px;
+  border-radius: var(--lq-r-full);
+  border: 1px solid var(--lq-line-strong);
+  background: var(--lq-surface-2);
+  font-size: 12px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--lq-text-2);
+  white-space: nowrap;
 }
-.looqz-icon-btn:hover {
-  background: rgba(255, 255, 255, 0.04);
-  color: #ecedf0;
+#looqz-sidebar .looqz-credits-badge .looqz-icon {
+  width: 13px;
+  height: 13px;
 }
-
-/* ----- SETTINGS PANEL (drop-down) ----- */
-.looqz-settings-panel {
-  background: rgba(12, 12, 14, 0.85);
-  backdrop-filter: blur(16px);
-  padding: 16px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  display: none;
-  flex-direction: column;
-  gap: 12px;
-  font-size: 13px;
-  color: #c9cdd8;
+#looqz-sidebar .looqz-credits-green {
+  color: var(--lq-ok);
+  border-color: rgba(74, 222, 128, 0.28);
+  background: rgba(74, 222, 128, 0.08);
 }
-.looqz-settings-panel.active {
-  display: flex;
+#looqz-sidebar .looqz-credits-orange {
+  color: var(--lq-warn);
+  border-color: rgba(251, 191, 36, 0.28);
+  background: rgba(251, 191, 36, 0.08);
 }
-.looqz-settings-panel .looqz-text-link {
-  color: #b388ff;
-  font-weight: 500;
-  cursor: pointer;
-  transition: 0.15s;
-  background: none;
-  border: none;
-  padding: 0;
-}
-.looqz-settings-panel .looqz-text-link:hover {
-  color: #d4bfff;
-  text-decoration: underline;
+#looqz-sidebar .looqz-credits-red {
+  color: var(--lq-bad);
+  border-color: rgba(251, 113, 133, 0.28);
+  background: rgba(251, 113, 133, 0.08);
 }
 
-/* ----- SCREENS (flex-grow scroll) ----- */
-.looqz-screen {
-  display: none;
-  flex-direction: column;
-  flex: 1;
-  padding: 24px 20px 20px 20px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #2a2a2f transparent;
-}
-.looqz-screen.active {
-  display: flex;
-}
-
-/* scrollbar */
-.looqz-screen::-webkit-scrollbar {
-  width: 4px;
-}
-.looqz-screen::-webkit-scrollbar-thumb {
-  background: #2a2a2f;
-  border-radius: 20px;
-}
-
-/* ----- TYPOGRAPHY / LINKS ----- */
-.looqz-text-link {
-  color: #b388ff;
-  font-weight: 500;
-  cursor: pointer;
-  transition: 0.15s;
-  background: none;
-  border: none;
-  padding: 0;
-  font-size: inherit;
-}
-.looqz-text-link:hover {
-  color: #d4bfff;
-  text-decoration: underline;
-}
-
-.looqz-section-title {
-  font-size: 13px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #7a7e8d;
-  margin: 18px 0 12px 0;
-}
-
-/* ----- INPUTS / BUTTONS (dark gen-z) ----- */
-.looqz-input {
-  background: #1c1c21;
-  border: 1px solid #2a2a30;
-  border-radius: 16px;
-  padding: 14px 16px;
-  color: #ecedf0;
-  font-size: 14px;
-  width: 100%;
-  transition: 0.2s;
-  outline: none;
-  font-weight: 400;
-}
-.looqz-input:focus {
-  border-color: #7c4dff;
-  box-shadow: 0 0 0 3px rgba(123, 77, 255, 0.15);
-}
-.looqz-input::placeholder {
-  color: #5a5e6d;
-  font-weight: 400;
-}
-
-.looqz-btn-primary {
-  background: linear-gradient(145deg, #7c4dff, #5e35b1);
-  border: none;
-  border-radius: 40px;
-  padding: 14px 18px;
-  font-weight: 600;
-  font-size: 15px;
-  color: white;
-  cursor: pointer;
-  transition: 0.2s;
-  width: 100%;
-  box-shadow: 0 6px 18px rgba(123, 77, 255, 0.2);
-  letter-spacing: 0.2px;
-  margin-top: 8px;
-}
-.looqz-btn-primary:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-  box-shadow: none;
-  background: #2a2a30;
-  color: #7a7e8d;
-}
-.looqz-btn-primary:not(:disabled):hover {
-  transform: scale(0.98);
-  box-shadow: 0 8px 24px rgba(123, 77, 255, 0.35);
-}
-
-.looqz-btn-secondary {
-  background: #1c1c21;
-  border: 1px solid #2a2a30;
-  border-radius: 40px;
-  padding: 12px 16px;
-  font-weight: 500;
-  font-size: 14px;
-  color: #d4d8e3;
-  cursor: pointer;
-  transition: 0.2s;
+#looqz-sidebar .looqz-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  width: 100%;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--lq-r-sm);
+  color: var(--lq-text-3);
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.looqz-btn-secondary:hover {
-  background: #26262e;
-  border-color: #3a3a44;
+#looqz-sidebar .looqz-icon-btn:hover {
+  background: var(--lq-surface-2);
+  color: var(--lq-text);
 }
-
-.looqz-error-text {
-  color: #f77b7b;
-  font-size: 13px;
-  margin-top: 8px;
-  display: none;
-  background: rgba(247, 123, 123, 0.05);
-  padding: 8px 12px;
-  border-radius: 14px;
-  border-left: 3px solid #f77b7b;
+#looqz-sidebar .looqz-icon-btn.is-active {
+  background: var(--lq-accent-soft);
+  color: var(--lq-accent-text);
 }
 
-.looqz-info-text {
-  color: #5a5e6d;
-  font-size: 13px;
-  margin-top: 12px;
-  text-align: center;
+/* ---------------------------------------------------------------------------
+   SETTINGS SHEET
+   ------------------------------------------------------------------------ */
+#looqz-sidebar .looqz-settings-panel {
+  position: relative;
+  z-index: 1;
+  display: none; /* JS toggles .active */
+  flex-direction: column;
+  flex-shrink: 0;
+  padding: 8px;
+  background: var(--lq-surface);
+  border-bottom: 1px solid var(--lq-line);
+}
+#looqz-sidebar .looqz-settings-panel.active {
+  display: flex;
 }
 
-/* ----- DROPZONE / PREVIEW CARDS (glass) ----- */
-.looqz-dropzone {
-  border: 2px dashed #2a2a30;
-  background: rgba(255, 255, 255, 0.02);
-  border-radius: 24px;
-  padding: 32px 12px;
-  text-align: center;
-  cursor: pointer;
-  transition: 0.2s;
-  margin-bottom: 14px;
-}
-.looqz-dropzone:hover {
-  border-color: #7c4dff;
-  background: rgba(123, 77, 255, 0.03);
-}
-.looqz-dropzone.drag-over {
-  border-color: #b388ff;
-  background: rgba(123, 77, 255, 0.06);
-}
-
-.looqz-image-preview-card {
+#looqz-sidebar .looqz-settings-key {
   display: flex;
   align-items: center;
-  gap: 14px;
-  background: #18181e;
-  padding: 12px 16px;
-  border-radius: 24px;
-  border: 1px solid #26262e;
-  margin-bottom: 12px;
-}
-.looqz-image-preview-thumb {
-  width: 56px;
-  height: 56px;
-  object-fit: cover;
-  border-radius: 16px;
-  background: #121215;
-  border: 1px solid #2a2a30;
-}
-.looqz-image-preview-info {
-  flex: 1;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 14px;
-}
-.looqz-image-preview-name {
-  color: #d4d8e3;
-  font-weight: 500;
-}
-
-.looqz-upload-buttons {
-  display: flex;
   gap: 10px;
-  flex-wrap: wrap;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border-radius: var(--lq-r-md);
+  background: var(--lq-surface-2);
+}
+#looqz-sidebar .looqz-settings-key .looqz-icon {
+  color: var(--lq-text-3);
+}
+#looqz-sidebar #looqz-key-display {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--lq-text-2);
 }
 
-/* mini preview row */
-.looqz-mini-preview-row {
+#looqz-sidebar .looqz-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--lq-r-md);
+  font-size: 13.5px;
+  font-weight: 450;
+  color: var(--lq-text);
+  transition: background 0.15s ease;
+}
+#looqz-sidebar .looqz-row:hover {
+  background: var(--lq-surface-2);
+}
+#looqz-sidebar .looqz-row .looqz-icon:first-child {
+  color: var(--lq-text-3);
+}
+#looqz-sidebar .looqz-row-label {
+  flex: 1;
+}
+#looqz-sidebar .looqz-row-chevron {
+  color: var(--lq-text-3);
+  width: 14px;
+  height: 14px;
+}
+#looqz-sidebar .looqz-row-danger {
+  color: var(--lq-bad);
+}
+#looqz-sidebar .looqz-row-danger:hover {
+  background: rgba(251, 113, 133, 0.09);
+}
+#looqz-sidebar .looqz-row-danger .looqz-icon:first-child {
+  color: var(--lq-bad);
+}
+
+#looqz-sidebar .looqz-divider {
+  height: 1px;
+  margin: 6px 12px;
+  background: var(--lq-line);
+}
+
+/* Small ghost button used inside rows (e.g. "Change"). */
+#looqz-sidebar .looqz-chip-btn {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 11px;
+  border-radius: var(--lq-r-full);
+  border: 1px solid var(--lq-line-strong);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--lq-text-2);
+  transition: 0.15s ease;
+}
+#looqz-sidebar .looqz-chip-btn:hover {
+  background: var(--lq-surface-3);
+  color: var(--lq-text);
+  border-color: var(--lq-text-3);
+}
+
+/* ---------------------------------------------------------------------------
+   SCREENS
+   ------------------------------------------------------------------------ */
+#looqz-sidebar .looqz-screen {
+  position: relative;
+  z-index: 1;
+  display: none; /* JS toggles .active */
+  flex-direction: column;
+  flex: 1;
+  padding: 22px 18px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--lq-surface-3) transparent;
+}
+#looqz-sidebar .looqz-screen.active {
+  display: flex;
+}
+#looqz-sidebar .looqz-screen::-webkit-scrollbar {
+  width: 8px;
+}
+#looqz-sidebar .looqz-screen::-webkit-scrollbar-track {
+  background: transparent;
+}
+#looqz-sidebar .looqz-screen::-webkit-scrollbar-thumb {
+  background: var(--lq-surface-3);
+  border: 2px solid var(--lq-bg);
+  border-radius: var(--lq-r-full);
+}
+
+/* ---- typography ---- */
+#looqz-sidebar .looqz-title {
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.024em;
+  line-height: 1.25;
+  color: var(--lq-text);
+}
+#looqz-sidebar .looqz-subtitle {
+  margin-top: 7px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--lq-text-2);
+}
+#looqz-sidebar .looqz-eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--lq-text-3);
+}
+#looqz-sidebar .looqz-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--lq-text-3);
+}
+
+#looqz-sidebar .looqz-text-link {
+  color: var(--lq-accent-text);
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+#looqz-sidebar .looqz-text-link:hover {
+  color: #d3c6ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Vertical rhythm helpers — spacing lives here, not in inline styles. */
+#looqz-sidebar .looqz-mt-md { margin-top: 16px; }
+#looqz-sidebar .looqz-mt-lg { margin-top: 24px; }
+#looqz-sidebar .looqz-spacer { flex: 1 1 auto; min-height: 16px; }
+
+/* ---------------------------------------------------------------------------
+   SETUP STEPS (API key screen)
+   ------------------------------------------------------------------------ */
+#looqz-sidebar .looqz-setup-box {
+  margin-top: 18px;
+  padding: 15px 16px;
+  border-radius: var(--lq-r-lg);
+  border: 1px solid var(--lq-line);
+  background: var(--lq-surface);
+}
+#looqz-sidebar .looqz-setup-title {
+  margin-bottom: 13px;
+}
+#looqz-sidebar .looqz-setup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  counter-reset: looqz-step;
+}
+#looqz-sidebar .looqz-setup-list li {
+  display: flex;
+  gap: 11px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--lq-text-2);
+}
+/* Numbered step markers, generated rather than typed. */
+#looqz-sidebar .looqz-setup-list li::before {
+  counter-increment: looqz-step;
+  content: counter(looqz-step);
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 12px 0 16px 0;
-  background: rgba(255, 255, 255, 0.01);
-  border-radius: 40px;
-  margin-bottom: 16px;
+  width: 19px;
+  height: 19px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--lq-surface-3);
+  color: var(--lq-text-2);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
-.looqz-mini-preview-item {
+#looqz-sidebar .looqz-setup-list b {
+  font-weight: 600;
+  color: var(--lq-text);
+}
+
+/* Extension-ID row with a copy affordance. */
+#looqz-sidebar .looqz-code-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  padding: 5px 5px 5px 10px;
+  border-radius: var(--lq-r-sm);
+  border: 1px solid var(--lq-line);
+  background: var(--lq-bg);
+}
+#looqz-sidebar .looqz-setup-code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  letter-spacing: 0;
+  color: var(--lq-text);
+  scrollbar-width: none;
+}
+#looqz-sidebar .looqz-setup-code::-webkit-scrollbar {
+  display: none;
+}
+#looqz-sidebar .looqz-copy-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--lq-text-3);
+  transition: 0.15s ease;
+}
+#looqz-sidebar .looqz-copy-btn:hover {
+  background: var(--lq-surface-3);
+  color: var(--lq-text);
+}
+#looqz-sidebar .looqz-copy-btn.is-copied {
+  color: var(--lq-ok);
+}
+
+/* ---------------------------------------------------------------------------
+   FORM FIELD
+   ------------------------------------------------------------------------ */
+#looqz-sidebar .looqz-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+#looqz-sidebar .looqz-input {
+  width: 100%;
+  height: 46px;
+  padding: 0 44px 0 15px;
+  border-radius: var(--lq-r-md);
+  border: 1px solid var(--lq-line-strong);
+  background: var(--lq-surface-2);
+  color: var(--lq-text);
+  font-size: 13.5px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  letter-spacing: 0.01em;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+#looqz-sidebar .looqz-input::placeholder {
+  color: var(--lq-text-3);
+  font-family: 'Inter', -apple-system, sans-serif;
+  letter-spacing: 0;
+  /* Placeholders are never masked by -webkit-text-security, so this stays legible. */
+}
+#looqz-sidebar .looqz-input:hover {
+  border-color: var(--lq-text-3);
+}
+#looqz-sidebar .looqz-input:focus {
+  border-color: var(--lq-accent);
+  background: var(--lq-surface);
+  box-shadow: 0 0 0 3px var(--lq-accent-soft);
+}
+
+/* Masking without type="password".
+   Chrome's password manager keys off the input TYPE, so a text input masked
+   with -webkit-text-security is never treated as a login field and therefore
+   never autofilled with the host site's saved credentials. */
+#looqz-sidebar .looqz-input-masked {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+#looqz-sidebar .looqz-input-masked.is-revealed {
+  -webkit-text-security: none;
+  text-security: none;
+}
+
+/* Defence in depth: if any password manager still injects a value, at least
+   force it to be readable instead of Chrome's light-blue-on-white overlay. */
+#looqz-sidebar .looqz-input:-webkit-autofill,
+#looqz-sidebar .looqz-input:-webkit-autofill:hover,
+#looqz-sidebar .looqz-input:-webkit-autofill:focus,
+#looqz-sidebar .looqz-input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--lq-text) !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--lq-surface-2) inset !important;
+  box-shadow: 0 0 0 1000px var(--lq-surface-2) inset !important;
+  caret-color: var(--lq-text) !important;
+  transition: background-color 9999s ease-out 0s;
+}
+
+#looqz-sidebar .looqz-field-action {
+  position: absolute;
+  right: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--lq-r-sm);
+  color: var(--lq-text-3);
+  transition: 0.15s ease;
+}
+#looqz-sidebar .looqz-field-action:hover {
+  background: var(--lq-surface-3);
+  color: var(--lq-text);
+}
+
+/* ---------------------------------------------------------------------------
+   BUTTONS
+   ------------------------------------------------------------------------ */
+#looqz-sidebar .looqz-btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 48px;
+  padding: 0 18px;
+  border-radius: var(--lq-r-md);
+  background: var(--lq-accent);
+  color: #fff;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset,
+    0 8px 22px -8px rgba(124, 92, 255, 0.7);
+  transition: background 0.15s ease, transform 0.12s var(--lq-ease),
+    box-shadow 0.15s ease;
+}
+#looqz-sidebar .looqz-btn-primary:not(:disabled):hover {
+  background: #8b6dff;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.14) inset,
+    0 10px 28px -8px rgba(124, 92, 255, 0.85);
+}
+#looqz-sidebar .looqz-btn-primary:not(:disabled):active {
+  transform: translateY(1px);
+}
+#looqz-sidebar .looqz-btn-primary:disabled {
+  cursor: not-allowed;
+  background: var(--lq-surface-2);
+  color: var(--lq-text-3);
+  /* An inset shadow rather than a border, so the button does not change height
+     the moment it becomes enabled. */
+  box-shadow: 0 0 0 1px var(--lq-line) inset;
+}
+
+#looqz-sidebar .looqz-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: var(--lq-r-md);
+  border: 1px solid var(--lq-line-strong);
+  background: var(--lq-surface-2);
+  color: var(--lq-text);
+  font-size: 13.5px;
+  font-weight: 500;
+  transition: 0.15s ease;
+}
+#looqz-sidebar .looqz-btn-secondary:hover {
+  background: var(--lq-surface-3);
+  border-color: var(--lq-text-3);
+}
+#looqz-sidebar .looqz-btn-row {
+  display: flex;
+  gap: 8px;
+}
+/* Secondary buttons are width:100% by default, so they need to flex-share here. */
+#looqz-sidebar .looqz-btn-row > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Coffee / support link — understated, not a yellow slab. */
+#looqz-sidebar .looqz-support {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: #7a7e8d;
+  gap: 8px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--lq-line);
 }
-.looqz-mini-preview-thumb {
-  width: 52px;
-  height: 52px;
-  object-fit: cover;
-  border-radius: 16px;
-  border: 1px solid #2a2a30;
-  background: #121215;
+#looqz-sidebar .looqz-support-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 15px;
+  border-radius: var(--lq-r-full);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  background: rgba(251, 191, 36, 0.07);
+  color: #fcd34d;
+  font-size: 12.5px;
+  font-weight: 550;
+  transition: 0.15s ease;
 }
-.looqz-mini-preview-arrow {
-  color: #5a5e6d;
-  font-size: 18px;
-  font-weight: 300;
+#looqz-sidebar .looqz-support-btn:hover {
+  background: rgba(251, 191, 36, 0.13);
+  border-color: rgba(251, 191, 36, 0.5);
 }
-
-/* ----- LOADING SHIMMER / PROGRESS ----- */
-.looqz-shimmer {
-  width: 100%;
-  height: 120px;
-  background: linear-gradient(145deg, #1c1c21, #26262e, #1c1c21);
-  background-size: 300% 100%;
-  border-radius: 24px;
-  animation: shimmer 1.8s infinite;
-  margin-bottom: 16px;
-}
-@keyframes shimmer {
-  0% { background-position: -300% 0; }
-  100% { background-position: 300% 0; }
+#looqz-sidebar .looqz-support-btn .looqz-icon {
+  width: 14px;
+  height: 14px;
 }
 
-.looqz-progress-container {
-  width: 100%;
-  height: 6px;
-  background: #1c1c21;
-  border-radius: 20px;
+/* ---------------------------------------------------------------------------
+   MESSAGES
+   ------------------------------------------------------------------------ */
+#looqz-sidebar .looqz-error-text {
+  display: none; /* JS toggles */
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--lq-r-md);
+  border: 1px solid rgba(251, 113, 133, 0.25);
+  background: rgba(251, 113, 133, 0.08);
+  color: #fda4af;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+}
+#looqz-sidebar .looqz-error-text .looqz-text-link {
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+#looqz-sidebar .looqz-zero-credits-banner {
+  display: none; /* JS flips to flex */
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 0 2px;
+  padding: 11px 13px;
+  border-radius: var(--lq-r-md);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  background: rgba(251, 191, 36, 0.08);
+  color: #fcd34d;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+#looqz-sidebar .looqz-zero-credits-banner .looqz-icon {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+}
+#looqz-sidebar .looqz-zero-credits-banner .looqz-text-link {
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+#looqz-sidebar .looqz-footnote {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   margin-top: 16px;
-  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--lq-text-3);
 }
-.looqz-progress-bar {
-  width: 0%;
-  height: 100%;
-  background: linear-gradient(90deg, #b388ff, #82b1ff);
-  border-radius: 20px;
-  transition: width 0.3s ease;
+#looqz-sidebar .looqz-footnote .looqz-icon {
+  width: 13px;
+  height: 13px;
 }
 
-/* ----- RESULT: COMPARISON + SLIDER (gen-z minimal) ----- */
-.looqz-comparison {
+/* ---------------------------------------------------------------------------
+   INPUT SLOTS (main screen) — two 3:4 tiles, empty or filled
+   ------------------------------------------------------------------------ */
+#looqz-sidebar .looqz-slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+#looqz-sidebar .looqz-slot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+#looqz-sidebar .looqz-slot-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--lq-text-3);
+}
+#looqz-sidebar .looqz-slot-label .looqz-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--lq-text-3);
+  transition: background 0.2s ease;
+}
+#looqz-sidebar .looqz-slot.is-filled .looqz-slot-label .looqz-dot {
+  background: var(--lq-ok);
+}
+#looqz-sidebar .looqz-slot.is-filled .looqz-slot-label {
+  color: var(--lq-text-2);
+}
+
+/* The two state wrappers per slot. content.js drives these with an inline
+   display:block / display:none, so the default here is only the pre-paint
+   state before updateMainScreenState() first runs. */
+#looqz-sidebar .looqz-slot-state {
+  display: none;
+}
+
+/* Empty tile — dashed, quiet, whole surface is the hit target. */
+#looqz-sidebar .looqz-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  padding: 12px;
+  border-radius: var(--lq-r-lg);
+  border: 1px dashed var(--lq-line-strong);
+  background: var(--lq-surface);
+  color: var(--lq-text-3);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+#looqz-sidebar .looqz-dropzone:hover {
+  border-color: var(--lq-accent);
+  background: var(--lq-accent-soft);
+  color: var(--lq-accent-text);
+}
+#looqz-sidebar .looqz-dropzone.drag-over {
+  border-style: solid;
+  border-color: var(--lq-accent);
+  background: var(--lq-accent-soft);
+  color: var(--lq-accent-text);
+}
+#looqz-sidebar .looqz-dropzone-label {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: center;
+  color: inherit;
+}
+#looqz-sidebar .looqz-dropzone-hint {
+  font-size: 10.5px;
+  line-height: 1.3;
+  text-align: center;
+  color: var(--lq-text-3);
+}
+
+/* The redundant "Upload" button: kept in the DOM (content.js binds it) but
+   hidden, because the tile above already opens the same file picker. */
+#looqz-sidebar .looqz-upload-buttons {
+  display: none;
+}
+
+/* Filled tile — image with an overlaid change control. */
+#looqz-sidebar .looqz-image-preview-card {
   position: relative;
   width: 100%;
-  aspect-ratio: 3/4;
-  max-height: 380px;
-  border-radius: 28px;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--lq-r-lg);
   overflow: hidden;
-  background: #0c0c0e;
-  border: 1px solid #1e1e24;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
-  user-select: none;
-  touch-action: none;
-  margin-bottom: 16px;
+  border: 1px solid var(--lq-line-strong);
+  background: var(--lq-surface);
 }
-.looqz-comparison img {
-  position: absolute;
-  top: 0;
-  left: 0;
+#looqz-sidebar .looqz-image-preview-thumb {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
+  object-position: top center;
 }
-.looqz-comparison-before {
+#looqz-sidebar .looqz-image-preview-info {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  clip-path: polygon(0 0, 50% 0, 50% 100%, 0 100%);
-  z-index: 2;
+  inset: auto 0 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 18px 8px 7px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.88), transparent);
+}
+#looqz-sidebar .looqz-image-preview-name {
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.75);
 }
-.looqz-comparison-before img {
-  object-fit: cover;
+#looqz-sidebar .looqz-image-preview-info .looqz-text-link {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border-radius: var(--lq-r-full);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 550;
+  backdrop-filter: blur(4px);
 }
-.looqz-comparison-after {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 1;
+#looqz-sidebar .looqz-image-preview-info .looqz-text-link:hover {
+  background: rgba(255, 255, 255, 0.26);
+  text-decoration: none;
+}
+#looqz-sidebar .looqz-image-preview-info .looqz-icon {
+  width: 11px;
+  height: 11px;
 }
 
-.looqz-slider-handle {
+/* ---------------------------------------------------------------------------
+   MINI PREVIEW (ready / loading states)
+   ------------------------------------------------------------------------ */
+#looqz-sidebar .looqz-mini-preview-row {
+  display: none; /* JS flips to flex */
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 12px;
+  margin-bottom: 14px;
+  border-radius: var(--lq-r-lg);
+  border: 1px solid var(--lq-line);
+  background: var(--lq-surface);
+}
+#looqz-screen-loading .looqz-mini-preview-row {
+  display: flex;
+}
+#looqz-sidebar .looqz-mini-preview-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--lq-text-3);
+}
+#looqz-sidebar .looqz-mini-preview-thumb {
+  width: 46px;
+  height: 46px;
+  object-fit: cover;
+  object-position: top center;
+  border-radius: var(--lq-r-md);
+  border: 1px solid var(--lq-line-strong);
+  background: var(--lq-surface-2);
+}
+#looqz-sidebar .looqz-mini-preview-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--lq-text-3);
+}
+
+/* ---------------------------------------------------------------------------
+   LOADING
+   ------------------------------------------------------------------------ */
+#looqz-sidebar .looqz-loading-card {
+  padding: 26px 20px 22px;
+  border-radius: var(--lq-r-xl);
+  border: 1px solid var(--lq-line);
+  background: var(--lq-surface);
+  text-align: center;
+}
+
+/* Pulsing garment silhouette instead of a meaningless grey shimmer bar. */
+#looqz-sidebar .looqz-loading-visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96px;
+  margin-bottom: 18px;
+  color: var(--lq-accent);
+}
+#looqz-sidebar .looqz-loading-visual .looqz-icon {
+  width: 46px;
+  height: 46px;
+  stroke-width: 1.25;
+  animation: looqz-pulse 1.9s var(--lq-ease) infinite;
+}
+@keyframes looqz-pulse {
+  0%,
+  100% {
+    opacity: 0.32;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+#looqz-sidebar #looqz-loading-text {
+  font-size: 14.5px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  text-align: center;
+  color: var(--lq-text);
+}
+#looqz-sidebar .looqz-loading-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--lq-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+#looqz-sidebar .looqz-progress-container {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  margin-top: 20px;
+  border-radius: var(--lq-r-full);
+  background: var(--lq-surface-3);
+  overflow: hidden;
+}
+#looqz-sidebar .looqz-progress-bar {
+  width: 0;
+  height: 100%;
+  border-radius: var(--lq-r-full);
+  background: linear-gradient(90deg, var(--lq-accent), #a78bfa);
+}
+/* A travelling sheen so the bar still reads as "working" once it parks at 90%. */
+#looqz-sidebar .looqz-progress-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.35),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: looqz-sheen 1.6s linear infinite;
+}
+@keyframes looqz-sheen {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   RESULT — before/after compare
+   ------------------------------------------------------------------------ */
+#looqz-sidebar .looqz-comparison {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  margin-top: 14px;
+  border-radius: var(--lq-r-xl);
+  overflow: hidden;
+  border: 1px solid var(--lq-line-strong);
+  background: #000;
+  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.9);
+  user-select: none;
+  touch-action: none;
+  cursor: ew-resize;
+}
+#looqz-sidebar .looqz-comparison img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  background: #000;
+}
+#looqz-sidebar .looqz-comparison-after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+#looqz-sidebar .looqz-comparison-before {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  clip-path: polygon(0 0, 50% 0, 50% 100%, 0 100%);
+}
+
+/* Corner labels so the split is self-explanatory. */
+#looqz-sidebar .looqz-compare-tag {
+  position: absolute;
+  top: 10px;
+  z-index: 4;
+  padding: 3px 9px;
+  border-radius: var(--lq-r-full);
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(6px);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: rgba(255, 255, 255, 0.82);
+  pointer-events: none;
+}
+#looqz-sidebar .looqz-compare-tag-before { left: 10px; }
+#looqz-sidebar .looqz-compare-tag-after { right: 10px; }
+
+#looqz-sidebar .looqz-slider-handle {
   position: absolute;
   top: 0;
   left: 50%;
-  width: 3px;
-  height: 100%;
-  background: rgba(255, 255, 255, 0.5);
   z-index: 3;
+  width: 2px;
+  height: 100%;
   transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.6);
   pointer-events: none;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.looqz-slider-btn {
-  background: #1c1c21;
-  backdrop-filter: blur(8px);
-  border: 1px solid #3a3a44;
-  border-radius: 40px;
-  padding: 6px 10px;
-  font-size: 14px;
-  color: #d4d8e3;
+#looqz-sidebar .looqz-slider-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #fff;
+  color: #18181b;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.5);
   pointer-events: all;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
   cursor: grab;
-  transition: 0.1s;
-  letter-spacing: 1px;
 }
-.looqz-slider-btn:active {
+#looqz-sidebar .looqz-slider-btn:active {
   cursor: grabbing;
 }
-
-/* zero credits banner */
-.looqz-zero-credits-banner {
-  background: rgba(247, 123, 123, 0.08);
-  border: 1px solid rgba(247, 123, 123, 0.15);
-  border-radius: 18px;
-  padding: 12px 16px;
-  font-size: 13px;
-  color: #f5a3a3;
-  margin: 12px 0 6px 0;
-  text-align: center;
-  display: none;
+#looqz-sidebar .looqz-slider-btn .looqz-icon {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2;
 }
 
-/* toast */
+/* ---------------------------------------------------------------------------
+   TOAST (appended to <body>, outside the sidebar)
+   ------------------------------------------------------------------------ */
 #looqz-toast {
   position: fixed;
-  bottom: 24px;
+  bottom: 26px;
   left: 50%;
   transform: translateX(-50%);
-  background: #1c1c21;
-  backdrop-filter: blur(12px);
-  padding: 12px 24px;
-  border-radius: 40px;
-  border: 1px solid #2a2a30;
-  color: #ecedf0;
+  z-index: 2147483647;
+  padding: 11px 20px;
+  border-radius: var(--lq-r-full, 999px);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  background: #16161c;
+  color: #f4f4f6;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    sans-serif;
+  font-size: 13.5px;
   font-weight: 500;
-  font-size: 14px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
-  z-index: 2147483648;
+  line-height: 1.4;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.7);
+  animation: looqz-toast-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes looqz-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
 }
 
-/* responsive */
-@media (max-width: 480px) {
-  #looqz-sidebar { width: 100vw; max-width: 100vw; border-radius: 0; }
-}
-
-/* extra modern touches */
-.looqz-btn-secondary, .looqz-btn-primary {
-  font-weight: 550;
-  letter-spacing: 0.2px;
-}
-.looqz-btn-secondary .looqz-icon-btn {
-  font-size: 16px;
-}
-code {
-  background: #0c0c0e;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 12px;
-  color: #b9bcc8;
-}
-.looqz-screen h3 {
-  font-weight: 600;
-  font-size: 20px;
-  letter-spacing: -0.3px;
-  color: #ecedf0;
-}
-.looqz-screen p {
-  color: #b9bcc8;
-  line-height: 1.5;
-}
-
-/* ----- PICKER STYLES (preserved from original) ----- */
+/* ---------------------------------------------------------------------------
+   PICKER (injected onto host page elements)
+   ------------------------------------------------------------------------ */
 body.looqz-picker-active * {
   cursor: crosshair !important;
 }
 
 .looqz-img-hover {
-  outline: 3px solid #7C3AED !important;
+  outline: 2px solid #7c5cff !important;
   outline-offset: 3px !important;
-  box-shadow: 0 0 0 6px rgba(124, 58, 237, 0.25) !important;
-  border-radius: 4px !important;
+  box-shadow: 0 0 0 6px rgba(124, 92, 255, 0.22) !important;
   transition: outline 0.15s, box-shadow 0.15s;
 }
 
 #looqz-picker-tooltip {
   position: fixed;
-  top: 16px;
+  top: 18px;
   left: 50%;
   transform: translateX(-50%);
-  background: #7C3AED;
-  color: white;
-  padding: 10px 20px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 500;
   z-index: 2147483646;
-  box-shadow: 0 4px 20px rgba(124, 58, 237, 0.4);
-  pointer-events: none;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: #7c5cff;
+  color: #fff;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    sans-serif;
+  font-size: 13px;
+  font-weight: 550;
   white-space: nowrap;
+  box-shadow: 0 8px 26px rgba(124, 92, 255, 0.45);
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------------------
+   RESPONSIVE / MOTION PREFERENCES
+   ------------------------------------------------------------------------ */
+@media (max-width: 480px) {
+  #looqz-sidebar {
+    width: 100vw;
+    max-width: 100vw;
+    border-left: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #looqz-sidebar,
+  #looqz-sidebar * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  #looqz-sidebar .looqz-progress-container::after {
+    display: none;
+  }
 }

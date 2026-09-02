@@ -137,6 +137,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // keep the message channel open for async response
   }
 
+  // ── DOWNLOAD_RESULT_IMAGE ────────────────────────────────────────────────
+  if (message.action === 'DOWNLOAD_RESULT_IMAGE') {
+    chrome.downloads.download({
+      url: message.url,
+      filename: message.filename || 'looqz-tryon.jpg',
+      saveAs: false,
+    }).then(downloadId => {
+      sendResponse({ ok: true, downloadId });
+    }).catch(err => {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+
   // ── FETCH_LEDGER_CREDITS ──────────────────────────────────────────────────
   // Scrapes the Looqz dashboard to get the user's real-time credit balance.
   if (message.action === 'FETCH_LEDGER_CREDITS') {
@@ -203,33 +217,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Converts a Base64 Data URL string to a Blob.
- * @param {string} dataUrl  e.g. "data:image/jpeg;base64,/9j/4AAQ..."
- * @returns {Blob}
- */
-function base64ToBlob(dataUrl) {
-  const [header, b64] = dataUrl.split(',');
-  const mimeMatch = header.match(/:(.*?);/);
-  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-  const bytes = atob(b64);
-  const arr = new Uint8Array(bytes.length);
-  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-  return new Blob([arr], { type: mime });
-}
-
-/**
  * Core try-on handler — runs fully in the service worker.
  *
- * v7 Pipeline (two-step direct architecture):
- *   1. Upload both images → Render proxy /upload → get public URLs (1 request)
- *   2. Call Looqz API directly from the browser (residential IP → CF passes)
- *   The backend NEVER touches the Looqz API.
+ * v7 Pipeline (direct multipart request):
+ *   1. Build multipart/form-data with user_image and cloth_image
+ *   2. If cloth fetch fails, fall back to cloth_image_url
+ *   3. Call Looqz API directly from the browser (residential IP → CF passes)
  */
 async function handleTryOn({ userPhotoBase64, clothImageUrl, productPageUrl, productTitle, apiKey, proxyUrl }) {
   const uploadUrl = proxyUrl.replace(/\/$/, '') + '/upload';
 
   // ── Step 1: Upload both images to Render in one request ───────────────────
-  const userBlob = base64ToBlob(userPhotoBase64);
+  const userBlob = dataUrlToBlob(userPhotoBase64);
   const form = new FormData();
   form.append('user_image', userBlob, 'user.jpg');
 
@@ -268,7 +267,43 @@ async function handleTryOn({ userPhotoBase64, clothImageUrl, productPageUrl, pro
   });
 
   let data = {};
-  try { data = await looqzRes.json(); } catch (e) { /* non-JSON body */ }
+  let rawBody = '';
+  try {
+    rawBody = await looqzRes.text();
+    if (rawBody) {
+      try {
+        data = JSON.parse(rawBody);
+      } catch (e) {
+        data = { message: rawBody };
+      }
+    }
+  } catch (e) {
+    data = { message: 'Failed to read response body.' };
+  }
 
-  return { ok: looqzRes.ok, status: looqzRes.status, data };
+  if (!looqzRes.ok) {
+    console.warn('Looqz try-on failed', {
+      status: looqzRes.status,
+      statusText: looqzRes.statusText,
+      body: rawBody,
+      data,
+    });
+  }
+
+  return { ok: looqzRes.ok, status: looqzRes.status, data, rawBody };
+}
+
+/**
+ * Converts a Base64 Data URL string to a Blob.
+ * @param {string} dataUrl
+ * @returns {Blob}
+ */
+function dataUrlToBlob(dataUrl) {
+  const [header, b64] = dataUrl.split(',');
+  const mimeMatch = header.match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const bytes = atob(b64);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new Blob([arr], { type: mime });
 }
