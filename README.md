@@ -15,7 +15,7 @@ A Chrome extension that lets you virtually try on clothes from **any** shopping 
 
 ### Step 1: Install the Extension
 
-Install **Looqz Virtual Try-On** from the [Chrome Web Store](#).
+Install **Looqz Virtual Try-On** from the [Chrome Web Store](https://chromewebstore.google.com/detail/looqz-virtual-try-on/hellloagipopgbgabmifdjolaokfpkba?hl=en-GB&authuser=0).
 
 ### Step 2: Create Your API Key
 
